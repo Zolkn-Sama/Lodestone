@@ -1,0 +1,13 @@
+[package]
+name = "lodestone-auth"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+argon2       = { workspace = true }
+jsonwebtoken = { workspace = true }
+serde        = { workspace = true }
+thiserror    = { workspace = true }
+uuid         = { workspace = true }
+chrono       = { workspace = true }

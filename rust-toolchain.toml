@@ -1,0 +1,7 @@
+[toolchain]
+# Stable courant (edition 2024 nécessite >= 1.85). Pin pour des builds reproductibles (CI + local).
+channel    = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile    = "minimal"
+# Décommente si tu cross-compiles (ex. build Linux depuis ton Mac) :
+# targets  = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]

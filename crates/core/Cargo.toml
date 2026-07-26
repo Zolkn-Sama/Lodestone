@@ -1,6 +1,11 @@
 [package]
-name = "auth"
-version = "0.1.0"
-edition = "2024"
+name = "lodestone-core"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [dependencies]
+serde     = { workspace = true }
+thiserror = { workspace = true }
+uuid      = { workspace = true }
+chrono    = { workspace = true }

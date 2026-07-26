@@ -1,6 +1,54 @@
 [package]
-name = "Lodestone"
-version = "0.1.0"
-edition = "2024"
+name = "lodestone-backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "lodestone"
+path = "src/main.rs"
 
 [dependencies]
+# --- Crates internes ---
+lodestone-core      = { workspace = true }
+lodestone-entity    = { workspace = true }
+lodestone-migration = { workspace = true }
+lodestone-auth      = { workspace = true }
+lodestone-llm       = { workspace = true }
+lodestone-rag       = { workspace = true }
+
+# --- Web / runtime ---
+tokio      = { workspace = true }
+axum       = { workspace = true }
+tower      = { workspace = true }
+tower-http = { workspace = true }
+
+# --- Base de données ---
+sea-orm  = { workspace = true }
+pgvector = { workspace = true }
+
+# --- Sérialisation / validation ---
+serde      = { workspace = true }
+serde_json = { workspace = true }
+validator  = { workspace = true }
+
+# --- Async / utilitaires ---
+futures     = { workspace = true }
+async-trait = { workspace = true }
+uuid        = { workspace = true }
+chrono      = { workspace = true }
+
+# --- Erreurs / logs ---
+thiserror          = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = "1.0.103"
+dotenvy = "0.15.7"
+users = "0.11.0"
+
+[dev-dependencies]
+# ServiceExt::oneshot pour tester les routes sans réseau (§10)
+tower                  = { workspace = true, features = ["util"] }
+testcontainers         = { workspace = true }
+testcontainers-modules = { workspace = true }

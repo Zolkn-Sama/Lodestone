@@ -1,0 +1,17 @@
+# Formatage du code — appliqué par `cargo fmt` (et vérifié en CI avec `cargo fmt --check`).
+edition              = "2024"
+max_width            = 100
+use_small_heuristics = "Default"
+newline_style        = "Unix"
+reorder_imports      = true
+reorder_modules      = true
+
+# --- Options NIGHTLY uniquement ---
+# rustfmt stable les ignore (avec un warning). Active-les seulement si tu formates en nightly
+# (`cargo +nightly fmt`). Elles rendent les imports et commentaires nettement plus propres.
+# group_imports                 = "StdExternalCrate"
+# imports_granularity           = "Crate"
+# wrap_comments                 = true
+# comment_width                 = 100
+# format_code_in_doc_comments   = true
+# normalize_comments            = true

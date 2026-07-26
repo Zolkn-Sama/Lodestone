@@ -1,6 +1,9 @@
 [package]
-name = "auth"
-version = "0.1.0"
-edition = "2024"
+name = "lodestone-migration"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [dependencies]
+sea-orm-migration = { workspace = true }
+tokio = { workspace = true }
