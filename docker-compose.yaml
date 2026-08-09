@@ -26,7 +26,7 @@ services:
   #
   # ⚠️ macOS / Apple Silicon : Docker N'A PAS accès au GPU (Metal). Ollama
   #    tournerait en CPU = lent. Sur Mac, préfère installer Ollama NATIVEMENT
-  #    (app/brew) et commenter ce service ; le backend pointera vers l'hôte via
+  #    (app/brew) et commenter ce services ; le backend pointera vers l'hôte via
   #    http://host.docker.internal:11434/v1  (voir env OLLAMA_BASE_URL plus bas).
   # ---------------------------------------------------------------------------
   ollama:

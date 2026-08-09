@@ -1,2 +1,5 @@
 /target
 /docs/Lodestone_Project.md
+/docs/Lodestone_Commandes.md
+.DS_Store
+gh_seed_issues.sh

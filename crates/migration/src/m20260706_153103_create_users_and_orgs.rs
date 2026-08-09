@@ -12,7 +12,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Organizations::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Organizations::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(Organizations::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Organizations::Name).string().not_null())
                     .col(
                         ColumnDef::new(Organizations::CreatedAt)
@@ -60,8 +65,12 @@ impl MigrationTrait for Migration {
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Ordre inverse de up() : users d'abord (aucune dépendance ici, mais on garde le réflexe).
-        manager.drop_table(Table::drop().table(Users::Table).to_owned()).await?;
-        manager.drop_table(Table::drop().table(Organizations::Table).to_owned()).await?;
+        manager
+            .drop_table(Table::drop().table(Users::Table).to_owned())
+            .await?;
+        manager
+            .drop_table(Table::drop().table(Organizations::Table).to_owned())
+            .await?;
         Ok(())
     }
 }

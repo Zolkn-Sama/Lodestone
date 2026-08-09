@@ -1,15 +1,14 @@
-
 #[allow(dead_code)] // jwt_secret / ollama_base_url seront lus quand les services arriveront
 pub struct Config {
     pub database_url: String,
     ollama_base_url: String,
-    jwt_secret: String,
+    pub jwt_secret: String,
     pub app_port: u16,
 }
 
 impl Config {
-     pub fn from_env() -> anyhow::Result<Self> {
-         fn required(key: &str) -> anyhow::Result<String> {
+    pub fn from_env() -> anyhow::Result<Self> {
+        fn required(key: &str) -> anyhow::Result<String> {
             std::env::var(key)
                 .map_err(|_| anyhow::anyhow!("variable d'environnement manquante: {key}"))
         }
@@ -29,7 +28,7 @@ impl Config {
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
-            .field("database_url", &"***")   // contient le mot de passe DB
+            .field("database_url", &"***") // contient le mot de passe DB
             .field("ollama_base_url", &self.ollama_base_url)
             .field("jwt_secret", &"***")
             .field("app_port", &self.app_port)
