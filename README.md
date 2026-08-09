@@ -14,13 +14,22 @@ Offrir à chaque équipe un point d'entrée unique vers son propre savoir : pose
 
 ## État du projet
 
-En développement actif. Le cœur fonctionnel est en cours de construction.
+Projet en **développement actif**, construit en public à des fins d'apprentissage et de portfolio. Le backend est écrit en Rust ; le frontend et le déploiement viendront plus tard.
 
-L'architecture, les choix techniques et la feuille de route sont **gardés privés** à ce stade.
+**Déjà en place :**
+- **Socle** — workspace multi-crates, configuration, Docker (PostgreSQL + pgvector), intégration continue (format · lint · tests).
+- **Base de données** — migrations versionnées, schéma utilisateurs / organisations.
+- **Authentification** — inscription, connexion, hachage `argon2id`, JWT (access + refresh avec rotation), routes protégées par extracteur.
+
+**Prochaines étapes :** organisations & rôles (RBAC), ingestion de documents, recherche sémantique et interface de chat.
+
+## Stack technique
+
+Rust · Axum · SeaORM · PostgreSQL + pgvector · JWT. *(Détails dans `Cargo.toml`.)*
 
 ## Contact
 
-*LANDRECY — enzo.landrecy@gmail.com / www.linkedin.com/in/enzo-landrecy*
+*LANDRECY — enzo.landrecy@gmail.com · [linkedin.com/in/enzo-landrecy](https://www.linkedin.com/in/enzo-landrecy)*
 
 ---
 
