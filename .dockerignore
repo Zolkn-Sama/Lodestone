@@ -1,0 +1,10 @@
+# Indispensable : sans ça, target/ (plusieurs Go) est envoyé au contexte de build,
+# ce qui casse le cache de cargo-chef et ralentit énormément le build.
+target/
+.git/
+.gitignore
+.env
+*.md
+docs/
+frontend/node_modules/
+**/*.log

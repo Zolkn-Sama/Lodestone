@@ -1,6 +1,97 @@
-[package]
-name = "Lodestone"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/entity",
+    "crates/migration",
+    "crates/auth",
+    "crates/llm",
+    "crates/rag",
+    "backend",
+]
+
+# Métadonnées partagées : les membres font `version.workspace = true`, etc.
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "UNLICENSED"
 
-[dependencies]
+# Pool de dépendances : les membres piochent avec `dep = { workspace = true }`
+[workspace.dependencies]
+# --- Crates internes (référencées par chemin) ---
+lodestone-core      = { path = "crates/core" }
+lodestone-entity    = { path = "crates/entity" }
+lodestone-migration = { path = "crates/migration" }
+lodestone-auth      = { path = "crates/auth" }
+lodestone-llm       = { path = "crates/llm" }
+lodestone-rag       = { path = "crates/rag" }
+
+# --- Framework web & runtime async ---
+axum = { version = "0.8.9", features = ["ws", "multipart", "macros"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tower-http = { version = "0.7.0", features = ["cors", "trace", "limit"] }
+axum-extra = { version = "0.12.6", features = ["typed-header", "cookie"] }
+
+# --- Sérialisation ---
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+# --- Base de données / ORM (pgvector NATIF via le feature postgres-vector) ---
+sea-orm = { version = "1.1.20", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+    "macros",
+    "with-uuid",
+    "with-chrono",
+    "postgres-vector",
+] }
+sea-orm-migration = { version = "1.1.20", features = [
+    "sqlx-postgres",
+    "runtime-tokio-rustls",
+] }
+pgvector = "0.4.1"
+
+# --- Authentification ---
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+argon2 = { version = "0.5.3", features = ["std"] }
+
+# --- Client LLM : Ollama OU OpenAI (même API compatible) ---
+reqwest = { version = "0.13.4", features = ["json", "stream", "rustls"] }
+
+# --- Validation & gestion d'erreurs ---
+validator = { version = "0.20.0", features = ["derive"] }
+thiserror = "2.0.18"
+anyhow = "1.0.102"
+
+# --- Configuration & logs structurés ---
+dotenvy = "0.15.7"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# --- Types utilitaires ---
+futures     = "0.3.32"
+async-trait = "0.1.89"
+uuid = { version = "1.23.3", features = ["v4", "serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+
+# --- RAG : extraction de texte & streams ---
+pdf-extract = "0.10.0"
+futures-util = "0.3.32"
+tokio-stream = "0.1.18"
+
+# --- Génération de jetons ---
+rand = "0.10.1"
+sha2 = "0.11.0"
+
+# --- Dev / tests (les membres les mettent en [dev-dependencies]) ---
+tower = { version = "0.5.3", features = ["util"] }
+http-body-util = "0.1.3"
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

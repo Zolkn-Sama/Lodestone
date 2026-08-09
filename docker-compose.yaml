@@ -1,0 +1,80 @@
+name: lodestone
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + extension pgvector (image officielle qui embarque l'extension).
+  # ---------------------------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lodestone
+      POSTGRES_PASSWORD: lodestone        # ⚠️ DEV uniquement — à surcharger en prod
+      POSTGRES_DB: lodestone
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lodestone -d lodestone"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Ollama (API OpenAI-compatible) pour les embeddings + le chat.
+  #
+  # ⚠️ macOS / Apple Silicon : Docker N'A PAS accès au GPU (Metal). Ollama
+  #    tournerait en CPU = lent. Sur Mac, préfère installer Ollama NATIVEMENT
+  #    (app/brew) et commenter ce services ; le backend pointera vers l'hôte via
+  #    http://host.docker.internal:11434/v1  (voir env OLLAMA_BASE_URL plus bas).
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # GPU NVIDIA (Linux) : décommente ce bloc.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------------
+  # Le backend lui-même. Démarré seulement avec le profil "full" :
+  #   docker compose up                 -> db + ollama (dev : tu lances `cargo run`)
+  #   docker compose --profile full up  -> + le backend conteneurisé
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://lodestone:lodestone@db:5432/lodestone
+      OLLAMA_BASE_URL: http://ollama:11434/v1   # sur Mac+Ollama natif : http://host.docker.internal:11434/v1
+      JWT_SECRET: change-me-in-prod
+      APP_PORT: "8090"
+      RUST_LOG: "info,lodestone=debug"
+    ports:
+      - "8090:8090"
+
+volumes:
+  pgdata:
+  ollama:

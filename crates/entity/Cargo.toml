@@ -1,6 +1,11 @@
 [package]
-name = "auth"
-version = "0.1.0"
-edition = "2024"
+name = "lodestone-entity"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [dependencies]
+sea-orm = { workspace = true }   # type Vector via le feature postgres-vector
+serde   = { workspace = true }
+uuid    = { workspace = true }
+chrono  = { workspace = true }

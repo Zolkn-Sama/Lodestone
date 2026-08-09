@@ -1,6 +1,9 @@
 [package]
-name = "auth"
-version = "0.1.0"
-edition = "2024"
+name = "lodestone-rag"
+version.workspace = true
+edition.workspace = true
+publish = false
 
 [dependencies]
+thiserror   = { workspace = true }
+pdf-extract = { workspace = true }

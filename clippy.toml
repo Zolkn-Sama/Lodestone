@@ -1,0 +1,15 @@
+# Configuration de Clippy : SEUILS et réglages des lints (ce fichier n'ACTIVE pas les lints).
+# Pour interdire les warnings, utilise plutôt [workspace.lints] dans le Cargo.toml racine (voir note).
+
+msrv = "1.95.0"                 # version minimale supportée : Clippy ne suggère rien de plus récent
+
+too-many-arguments-threshold = 8     # au-delà, Clippy signale une fonction à trop d'arguments
+type-complexity-threshold    = 250   # tolérance pour les types génériques imbriqués (utile avec SeaORM/axum)
+
+# Pour un binaire d'application, pas besoin de protéger une API publique :
+avoid-breaking-exported-api = false
+
+# Exemple : interdire des appels dangereux dans tout le code (décommente pour activer).
+# disallowed-methods = [
+#   { path = "std::env::var", reason = "passe par crate::config plutôt que de lire l'env en direct" },
+# ]
