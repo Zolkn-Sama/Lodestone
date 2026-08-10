@@ -3,3 +3,7 @@ pub mod state;
 pub mod router;
 pub mod error;
 pub mod repositories;
+pub mod handlers;
+pub mod dto;
+pub mod extractors;
+pub mod services;

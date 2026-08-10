@@ -1,2 +1,11 @@
 /target
+<<<<<<< Updated upstream
 /docs/Lodestone_Project.md
+=======
+/docs/Lodestone_Project.md
+/docs/Lodestone_Commandes.md
+.DS_Store
+gh_seed_issues.sh
+.env
+.env.example
+>>>>>>> Stashed changes

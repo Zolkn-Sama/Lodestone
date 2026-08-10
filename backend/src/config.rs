@@ -3,7 +3,7 @@
 pub struct Config {
     pub database_url: String,
     ollama_base_url: String,
-    jwt_secret: String,
+    pub(crate) jwt_secret: String,
     pub app_port: u16,
 }
 
