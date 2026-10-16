@@ -5,7 +5,7 @@ use axum::{
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use crate::{handlers, state::AppState};
+use crate::{handlers, state::AppState, ws};
 
 // ----- Router (ira plus tard dans src/router.rs) -----------------------------
 pub fn app_router(state: AppState) -> Router {
@@ -14,6 +14,7 @@ pub fn app_router(state: AppState) -> Router {
         .route("/health", get(handlers::health::health))
         .route("/health/ready", get(handlers::health::ready))
         .route("/boom", get(handlers::health::boom))
+        .route("/ws", get(ws::handler::ws_handler))
         .route("/api/auth/register", post(handlers::auth::register))
         .route("/api/auth/login", post(handlers::auth::login))
         .route("/api/auth/me", get(handlers::auth::me))
