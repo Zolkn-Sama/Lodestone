@@ -1,9 +1,11 @@
 pub mod config;
 pub mod dto;
 pub mod error;
+pub mod events;
 pub mod extractors;
 pub mod handlers;
 pub mod repositories;
 pub mod router;
 pub mod services;
 pub mod state;
+pub mod ws;

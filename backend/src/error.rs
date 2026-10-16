@@ -27,6 +27,9 @@ pub enum AppError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
+
     #[error("Internal server error")]
     Internal,
 
@@ -55,6 +58,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
             AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden".to_string()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.to_string()),
+            AppError::PayloadTooLarge(m) => (StatusCode::PAYLOAD_TOO_LARGE, m.to_string()),
             AppError::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error".to_string(),
