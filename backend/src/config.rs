@@ -7,6 +7,16 @@ pub struct Config {
 }
 
 impl Config {
+    /// Config construite à la main, sans lire l'environnement (tests d'intégration).
+    pub fn new(database_url: String, jwt_secret: String) -> Self {
+        Self {
+            database_url,
+            ollama_base_url: "http://localhost:11434/v1".to_string(),
+            jwt_secret,
+            app_port: 0,
+        }
+    }
+
     pub fn from_env() -> anyhow::Result<Self> {
         fn required(key: &str) -> anyhow::Result<String> {
             std::env::var(key)
