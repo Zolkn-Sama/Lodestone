@@ -32,3 +32,43 @@ impl Role {
         self.rank() >= required.rank()
     }
 }
+
+impl std::str::FromStr for Role {
+    type Err = UnknownRole;
+
+    /// Inverse de `as_str` : relit la colonne TEXT stockée en base.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "owner" => Ok(Role::Owner),
+            "admin" => Ok(Role::Admin),
+            "member" => Ok(Role::Member),
+            other => Err(UnknownRole(other.to_string())),
+        }
+    }
+}
+
+/// Valeur de rôle inconnue (base corrompue ou entrée invalide).
+#[derive(Debug, thiserror::Error)]
+#[error("rôle inconnu : {0}")]
+pub struct UnknownRole(pub String);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hierarchie() {
+        assert!(Role::Owner.at_least(Role::Admin));
+        assert!(Role::Admin.at_least(Role::Admin));
+        assert!(!Role::Member.at_least(Role::Admin));
+        assert!(!Role::Admin.at_least(Role::Owner));
+    }
+
+    #[test]
+    fn aller_retour_texte() {
+        for r in [Role::Owner, Role::Admin, Role::Member] {
+            assert_eq!(r.as_str().parse::<Role>().ok(), Some(r));
+        }
+        assert!("superadmin".parse::<Role>().is_err());
+    }
+}
