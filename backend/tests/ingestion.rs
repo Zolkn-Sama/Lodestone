@@ -77,9 +77,15 @@ async fn ingestion_complete() {
     let (org, doc) = seed_document(&app, "txt").await;
     assert_eq!(status(&app, doc).await, "pending");
 
-    let stored = ingestion::ingest(&app.db, app.llm.as_ref(), doc, long_text(20).into_bytes())
-        .await
-        .expect("ingestion");
+    let stored = ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        doc,
+        long_text(20).into_bytes(),
+    )
+    .await
+    .expect("ingestion");
 
     assert!(stored > 1, "texte long -> plusieurs fragments ({stored})");
     assert_eq!(status(&app, doc).await, "ready");
@@ -110,9 +116,15 @@ async fn ingestion_complete() {
 async fn le_vecteur_stocke_est_celui_du_fragment() {
     let app = TestApp::spawn().await;
     let (org, doc) = seed_document(&app, "md").await;
-    ingestion::ingest(&app.db, app.llm.as_ref(), doc, long_text(20).into_bytes())
-        .await
-        .expect("ingestion");
+    ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        doc,
+        long_text(20).into_bytes(),
+    )
+    .await
+    .expect("ingestion");
 
     // On prend un fragment, on recalcule son vecteur avec le mock, et la
     // recherche cosinus pgvector (filtrée par org) doit le classer premier.
@@ -151,12 +163,24 @@ async fn reingestion_remplace_les_fragments() {
     let app = TestApp::spawn().await;
     let (_, doc) = seed_document(&app, "txt").await;
 
-    let first = ingestion::ingest(&app.db, app.llm.as_ref(), doc, long_text(20).into_bytes())
-        .await
-        .expect("1re ingestion");
-    let second = ingestion::ingest(&app.db, app.llm.as_ref(), doc, b"Texte court.".to_vec())
-        .await
-        .expect("2e ingestion");
+    let first = ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        doc,
+        long_text(20).into_bytes(),
+    )
+    .await
+    .expect("1re ingestion");
+    let second = ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        doc,
+        b"Texte court.".to_vec(),
+    )
+    .await
+    .expect("2e ingestion");
 
     assert!(first > 1);
     assert_eq!(second, 1);
@@ -169,11 +193,25 @@ async fn fichier_illisible_passe_en_failed() {
     let (_, txt) = seed_document(&app, "txt").await;
     let (_, pdf) = seed_document(&app, "pdf").await;
 
-    let err = ingestion::ingest(&app.db, app.llm.as_ref(), txt, vec![0xff, 0xfe, 0x00]).await;
+    let err = ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        txt,
+        vec![0xff, 0xfe, 0x00],
+    )
+    .await;
     assert!(matches!(err, Err(IngestionError::Rag(_))));
     assert_eq!(status(&app, txt).await, "failed");
 
-    let err = ingestion::ingest(&app.db, app.llm.as_ref(), pdf, b"pas un pdf".to_vec()).await;
+    let err = ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        pdf,
+        b"pas un pdf".to_vec(),
+    )
+    .await;
     assert!(matches!(err, Err(IngestionError::Rag(_))));
     assert_eq!(status(&app, pdf).await, "failed");
     assert_eq!(chunk_count(&app, pdf).await, 0);
@@ -185,14 +223,27 @@ async fn panne_du_llm_passe_en_failed_sans_rien_ecrire() {
     let (_, doc) = seed_document(&app, "txt").await;
 
     // Une première ingestion réussie…
-    ingestion::ingest(&app.db, app.llm.as_ref(), doc, long_text(5).into_bytes())
-        .await
-        .expect("ingestion");
+    ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        doc,
+        long_text(5).into_bytes(),
+    )
+    .await
+    .expect("ingestion");
     let before = chunk_count(&app, doc).await;
 
     // … puis le LLM tombe : statut failed, anciens fragments conservés.
     let failing = MockLlmClient::failing(EMBEDDING_DIMENSIONS);
-    let err = ingestion::ingest(&app.db, &failing, doc, long_text(20).into_bytes()).await;
+    let err = ingestion::ingest(
+        &app.db,
+        &app.events,
+        &failing,
+        doc,
+        long_text(20).into_bytes(),
+    )
+    .await;
     assert!(matches!(err, Err(IngestionError::Llm(_))));
     assert_eq!(status(&app, doc).await, "failed");
     assert_eq!(chunk_count(&app, doc).await, before);
@@ -205,7 +256,7 @@ async fn mauvaise_dimension_refusee_avant_tout_appel() {
 
     let wrong = MockLlmClient::new(384);
     assert_eq!(wrong.embedding_dimensions(), 384);
-    let err = ingestion::ingest(&app.db, &wrong, doc, b"Bonjour.".to_vec()).await;
+    let err = ingestion::ingest(&app.db, &app.events, &wrong, doc, b"Bonjour.".to_vec()).await;
     assert!(matches!(
         err,
         Err(IngestionError::Dimensions {
@@ -221,11 +272,18 @@ async fn format_inconnu_et_document_absent() {
     let app = TestApp::spawn().await;
     let (_, doc) = seed_document(&app, "docx").await;
 
-    let err = ingestion::ingest(&app.db, app.llm.as_ref(), doc, b"x".to_vec()).await;
+    let err = ingestion::ingest(&app.db, &app.events, app.llm.as_ref(), doc, b"x".to_vec()).await;
     assert!(matches!(err, Err(IngestionError::Rag(_))));
     assert_eq!(status(&app, doc).await, "failed");
 
-    let err = ingestion::ingest(&app.db, app.llm.as_ref(), Uuid::new_v4(), b"x".to_vec()).await;
+    let err = ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        Uuid::new_v4(),
+        b"x".to_vec(),
+    )
+    .await;
     assert!(matches!(err, Err(IngestionError::DocumentNotFound)));
 }
 
@@ -233,9 +291,15 @@ async fn format_inconnu_et_document_absent() {
 async fn suppressions_en_cascade() {
     let app = TestApp::spawn().await;
     let (org, doc) = seed_document(&app, "txt").await;
-    ingestion::ingest(&app.db, app.llm.as_ref(), doc, long_text(10).into_bytes())
-        .await
-        .expect("ingestion");
+    ingestion::ingest(
+        &app.db,
+        &app.events,
+        app.llm.as_ref(),
+        doc,
+        long_text(10).into_bytes(),
+    )
+    .await
+    .expect("ingestion");
     assert!(chunk_count(&app, doc).await > 0);
 
     // Supprimer l'org supprime ses documents, donc leurs fragments.

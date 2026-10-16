@@ -20,7 +20,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use lodestone_backend::{
-    config::Config, router::app_router, services::ingestion::EMBEDDING_DIMENSIONS, state::AppState,
+    config::Config, events::Events, router::app_router, services::ingestion::EMBEDDING_DIMENSIONS,
+    state::AppState,
 };
 use lodestone_llm::MockLlmClient;
 use lodestone_migration::{Migrator, MigratorTrait};
@@ -30,6 +31,8 @@ pub struct TestApp {
     pub db: DatabaseConnection,
     /// Le même client que celui de l'`AppState` : embeddings déterministes, sans réseau.
     pub llm: Arc<MockLlmClient>,
+    /// Le même bus que celui de l'`AppState`.
+    pub events: Events,
     // Gardé en vie tant que le test tourne ; le conteneur est supprimé au drop.
     _pg: ContainerAsync<Postgres>,
 }
@@ -58,16 +61,19 @@ impl TestApp {
         Migrator::up(&db, None).await.expect("migrations");
 
         let llm = Arc::new(MockLlmClient::new(EMBEDDING_DIMENSIONS));
+        let events = Events::default();
         let state = AppState {
             db: db.clone(),
             config: Arc::new(Config::new(url, "secret-de-test".into())),
             llm: llm.clone(),
+            events: events.clone(),
         };
 
         Self {
             router: app_router(state),
             db,
             llm,
+            events,
             _pg: pg,
         }
     }
@@ -260,4 +266,52 @@ pub fn multipart_body(parts: &[(String, Vec<u8>)]) -> (String, Vec<u8>) {
     }
     body.extend(format!("--{boundary}--\r\n").as_bytes());
     (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+// ----- WebSocket ------------------------------------------------------------------
+
+pub type WsSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+pub async fn ws_connect(addr: std::net::SocketAddr, token: &str) -> WsSocket {
+    let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws?token={token}"))
+        .await
+        .expect("connexion WebSocket");
+    socket
+}
+
+pub async fn ws_send(socket: &mut WsSocket, value: Value) {
+    use futures::SinkExt;
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::text(
+            value.to_string(),
+        ))
+        .await
+        .expect("envoi");
+}
+
+/// Prochain message texte du serveur, en JSON, ou `None` si rien n'arrive
+/// avant `timeout`.
+pub async fn ws_try_recv(socket: &mut WsSocket, timeout: std::time::Duration) -> Option<Value> {
+    use futures::StreamExt;
+    tokio::time::timeout(timeout, async {
+        loop {
+            match socket.next().await {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                    return serde_json::from_str(&text).expect("JSON");
+                }
+                Some(Ok(_)) => {}
+                other => panic!("socket fermée : {other:?}"),
+            }
+        }
+    })
+    .await
+    .ok()
+}
+
+/// Prochain message texte du serveur, en JSON (échoue après 2 s).
+pub async fn ws_recv(socket: &mut WsSocket) -> Value {
+    ws_try_recv(socket, std::time::Duration::from_secs(2))
+        .await
+        .expect("réponse du serveur sous 2 s")
 }

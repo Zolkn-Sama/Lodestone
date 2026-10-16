@@ -6,23 +6,13 @@ use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use sea_orm::{ConnectionTrait, Statement};
-use serde_json::{Value, json};
-use tokio::net::TcpStream;
+use serde_json::json;
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
+    connect_async,
     tungstenite::{Error as WsError, Message},
 };
 
-use common::TestApp;
-
-type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-async fn connect(addr: std::net::SocketAddr, token: &str) -> Socket {
-    let (socket, _) = connect_async(format!("ws://{addr}/ws?token={token}"))
-        .await
-        .expect("connexion WebSocket");
-    socket
-}
+use common::{TestApp, ws_connect as connect, ws_recv as recv, ws_send as send};
 
 /// Statut HTTP d'une connexion refusée (avant l'upgrade).
 async fn rejected_status(url: String) -> u16 {
@@ -30,27 +20,6 @@ async fn rejected_status(url: String) -> u16 {
         Err(WsError::Http(res)) => res.status().as_u16(),
         Err(e) => panic!("erreur inattendue : {e}"),
         Ok(_) => panic!("la connexion aurait dû être refusée"),
-    }
-}
-
-async fn send(socket: &mut Socket, value: Value) {
-    socket
-        .send(Message::text(value.to_string()))
-        .await
-        .expect("envoi");
-}
-
-/// Prochain message texte du serveur, en JSON (2 s max).
-async fn recv(socket: &mut Socket) -> Value {
-    loop {
-        let frame = tokio::time::timeout(Duration::from_secs(2), socket.next())
-            .await
-            .expect("réponse du serveur sous 2 s")
-            .expect("socket ouverte")
-            .expect("frame valide");
-        if let Message::Text(text) = frame {
-            return serde_json::from_str(&text).expect("JSON");
-        }
     }
 }
 
