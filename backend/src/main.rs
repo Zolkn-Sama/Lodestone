@@ -1,23 +1,22 @@
-
-
-use std::{sync::Arc, time::Duration};
 use sea_orm::{ConnectOptions, Database};
+use std::{sync::Arc, time::Duration};
 //use Testcontainers::bollard::config;
 
-
+use lodestone_backend::config::Config;
+use lodestone_backend::router;
+use lodestone_backend::state::AppState;
 use tokio::net::TcpListener;
 use tracing::info;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use lodestone_backend::router;
-use lodestone_backend::config::Config;
-use lodestone_backend::state::AppState;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-
     dotenvy::dotenv().ok();
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,lodestone=debug")))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,lodestone=debug")),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -31,9 +30,12 @@ async fn main() -> anyhow::Result<()> {
         .connect_timeout(Duration::from_secs(5))
         .sqlx_logging(false);
     let db = Database::connect(opt).await?;
-    
+
     // 4. État partagé + router.
-    let state = AppState { db, config: Arc::new(config) };
+    let state = AppState {
+        db,
+        config: Arc::new(config),
+    };
     let port = state.config.app_port;
     let app = router::app_router(state);
 
