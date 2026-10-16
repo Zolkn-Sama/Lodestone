@@ -4,8 +4,10 @@ use chrono::{Duration, Utc};
 
 const REFRESH_TTL_DAYS: i64 = 7;
 
+use crate::{
+    dto::auth::TokenResponse, error::AppError, repositories::refresh_tokens, repositories::users,
+};
 use lodestone_auth::{jwt, password, refresh};
-use crate::{dto::auth::TokenResponse, error::AppError, repositories::users, repositories::refresh_tokens};
 
 /// Inscription : hache le mot de passe, refuse un email déjà pris, crée le user.
 pub async fn register(
@@ -20,8 +22,7 @@ pub async fn register(
     }
 
     // 2. On hache AVANT de stocker. Le clair ne touche jamais la base.
-    let password_hash = password::hash_password(&plain_password)
-        .map_err(|_| AppError::Internal)?;
+    let password_hash = password::hash_password(&plain_password).map_err(|_| AppError::Internal)?;
 
     // 3. Création.
     let user = users::create(db, email, password_hash).await?;

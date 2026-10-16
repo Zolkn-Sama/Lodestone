@@ -2,7 +2,7 @@ pub use sea_orm_migration::prelude::*;
 
 mod m20260706_153103_create_users_and_orgs;
 mod m20260809_131736_create_refresh_tokens;
-mod m20260810_130502_create_memberships;   // <-- adapte au nom réel du fichier généré
+mod m20260810_130502_create_memberships; // <-- adapte au nom réel du fichier généré
 
 pub struct Migrator;
 

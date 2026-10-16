@@ -11,11 +11,24 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(RefreshTokens::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(RefreshTokens::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(RefreshTokens::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(RefreshTokens::UserId).uuid().not_null())
                     .col(ColumnDef::new(RefreshTokens::TokenHash).string().not_null())
-                    .col(ColumnDef::new(RefreshTokens::ExpiresAt).timestamp_with_time_zone().not_null())
-                    .col(ColumnDef::new(RefreshTokens::RevokedAt).timestamp_with_time_zone().null())
+                    .col(
+                        ColumnDef::new(RefreshTokens::ExpiresAt)
+                            .timestamp_with_time_zone()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RefreshTokens::RevokedAt)
+                            .timestamp_with_time_zone()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(RefreshTokens::CreatedAt)
                             .timestamp_with_time_zone()
@@ -46,16 +59,27 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.drop_table(Table::drop().table(RefreshTokens::Table).to_owned()).await?;
+        manager
+            .drop_table(Table::drop().table(RefreshTokens::Table).to_owned())
+            .await?;
         Ok(())
     }
 }
 
 #[derive(DeriveIden)]
 enum RefreshTokens {
-    Table, Id, UserId, TokenHash, ExpiresAt, RevokedAt, CreatedAt,
+    Table,
+    Id,
+    UserId,
+    TokenHash,
+    ExpiresAt,
+    RevokedAt,
+    CreatedAt,
 }
 
 // Référence minimale pour la clé étrangère.
 #[derive(DeriveIden)]
-enum Users { Table, Id }
+enum Users {
+    Table,
+    Id,
+}

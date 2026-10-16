@@ -11,7 +11,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(Memberships::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(Memberships::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(Memberships::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(ColumnDef::new(Memberships::UserId).uuid().not_null())
                     .col(ColumnDef::new(Memberships::OrgId).uuid().not_null())
                     .col(ColumnDef::new(Memberships::Role).string().not_null())
@@ -55,16 +60,29 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        manager.drop_table(Table::drop().table(Memberships::Table).to_owned()).await?;
+        manager
+            .drop_table(Table::drop().table(Memberships::Table).to_owned())
+            .await?;
         Ok(())
     }
 }
 
 #[derive(DeriveIden)]
 enum Memberships {
-    Table, Id, UserId, OrgId, Role, CreatedAt,
+    Table,
+    Id,
+    UserId,
+    OrgId,
+    Role,
+    CreatedAt,
 }
 #[derive(DeriveIden)]
-enum Users { Table, Id }
+enum Users {
+    Table,
+    Id,
+}
 #[derive(DeriveIden)]
-enum Organizations { Table, Id }
+enum Organizations {
+    Table,
+    Id,
+}
