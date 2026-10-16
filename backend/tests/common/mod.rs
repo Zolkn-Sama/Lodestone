@@ -166,6 +166,18 @@ impl TestApp {
         panic!("ingestion du document {document_id} non terminée après 10 s");
     }
 
+    /// Sert le router sur un vrai port local (nécessaire pour le WebSocket,
+    /// que `oneshot` ne sait pas « upgrader »). Renvoie `127.0.0.1:<port>`.
+    pub async fn serve(&self) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let router = self.router.clone();
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        addr
+    }
+
     pub async fn get(&self, uri: &str, token: &str) -> (StatusCode, Value) {
         self.request(Method::GET, uri, Some(token), None).await
     }

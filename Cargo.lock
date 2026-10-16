@@ -2086,6 +2086,7 @@ dependencies = [
  "testcontainers-modules",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tower",
  "tower-http 0.7.0",
  "tracing",
