@@ -9,14 +9,19 @@ use axum::{
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
+use sea_orm::DatabaseConnection;
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use tokio::sync::{
+    broadcast::{self, error::RecvError},
+    mpsc,
+};
 use uuid::Uuid;
 
 use lodestone_auth::jwt::decode_access_token;
 
 use crate::{
     error::AppError,
+    events::OrgEvent,
     repositories,
     state::AppState,
     ws::protocol::{ClientMsg, ServerMsg},
@@ -71,11 +76,19 @@ pub async fn ws_handler(
     user: WsUser,
     ws: WebSocketUpgrade,
 ) -> Response {
+    // Abonnement AVANT l'upgrade : quand le client reçoit la réponse de
+    // handshake, il ne peut plus rater d'événement.
+    let events = state.events.subscribe();
     ws.max_message_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| handle_socket(socket, state, user.user_id))
+        .on_upgrade(move |socket| handle_socket(socket, state, user.user_id, events))
 }
 
-async fn handle_socket(socket: WebSocket, _state: AppState, user_id: Uuid) {
+async fn handle_socket(
+    socket: WebSocket,
+    state: AppState,
+    user_id: Uuid,
+    events: broadcast::Receiver<OrgEvent>,
+) {
     tracing::debug!(%user_id, "connexion WebSocket ouverte");
     let (mut sink, mut stream) = socket.split();
 
@@ -93,6 +106,13 @@ async fn handle_socket(socket: WebSocket, _state: AppState, user_id: Uuid) {
         }
         let _ = sink.close().await;
     });
+
+    let notifier = tokio::spawn(forward_org_events(
+        state.db.clone(),
+        user_id,
+        events,
+        outbox.clone(),
+    ));
 
     while let Some(frame) = stream.next().await {
         let reply = match frame {
@@ -112,9 +132,41 @@ async fn handle_socket(socket: WebSocket, _state: AppState, user_id: Uuid) {
         }
     }
 
+    notifier.abort();
+    let _ = notifier.await; // libère sa copie du canal
     drop(outbox); // ferme le canal : l'écrivain termine et ferme la socket
     let _ = writer.await;
     tracing::debug!(%user_id, "connexion WebSocket fermée");
+}
+
+/// Relaie au client les événements des orgs dont il est membre. L'appartenance
+/// est vérifiée à chaque événement : un membre retiré cesse aussitôt de recevoir.
+async fn forward_org_events(
+    db: DatabaseConnection,
+    user_id: Uuid,
+    mut events: broadcast::Receiver<OrgEvent>,
+    outbox: mpsc::Sender<ServerMsg>,
+) {
+    loop {
+        let event = match events.recv().await {
+            Ok(event) => event,
+            Err(RecvError::Lagged(skipped)) => {
+                tracing::warn!(%user_id, skipped, "événements WebSocket perdus (client trop lent)");
+                continue;
+            }
+            Err(RecvError::Closed) => return,
+        };
+
+        match repositories::memberships::find(&db, user_id, event.org_id).await {
+            Ok(Some(_)) => {
+                if outbox.send(event.message).await.is_err() {
+                    return; // connexion fermée
+                }
+            }
+            Ok(None) => {} // pas membre de cette org
+            Err(e) => tracing::error!(error = %e, "vérification d'appartenance impossible"),
+        }
+    }
 }
 
 async fn handle_message(msg: ClientMsg) -> Option<ServerMsg> {

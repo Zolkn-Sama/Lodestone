@@ -5,7 +5,11 @@ use sea_orm::{DatabaseConnection, DbErr, TransactionTrait};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::repositories::{self, chunks::NewChunk};
+use crate::{
+    events::Events,
+    repositories::{self, chunks::NewChunk},
+    ws::protocol::ServerMsg,
+};
 use lodestone_core::document_status::DocumentStatus;
 use lodestone_entity::documents;
 use lodestone_llm::{LlmClient, LlmError};
@@ -43,8 +47,10 @@ pub enum IngestionError {
 /// Ingère `bytes` comme contenu du document `document_id`. Renvoie le nombre
 /// de fragments stockés. En cas d'échec, le document passe en `failed` et
 /// l'erreur est renvoyée. Ré-ingérer un document remplace ses fragments.
+/// Chaque transition est publiée sur `events` (`doc_status`) une fois écrite en base.
 pub async fn ingest(
     db: &DatabaseConnection,
+    events: &Events,
     llm: &dyn LlmClient,
     document_id: Uuid,
     bytes: Vec<u8>,
@@ -53,24 +59,43 @@ pub async fn ingest(
         .await?
         .ok_or(IngestionError::DocumentNotFound)?;
 
-    repositories::documents::set_status(db, document.id, DocumentStatus::Processing).await?;
+    set_status(db, events, &document, DocumentStatus::Processing).await?;
 
     match run(db, llm, &document, bytes).await {
         Ok(count) => {
-            repositories::documents::set_status(db, document.id, DocumentStatus::Ready).await?;
+            set_status(db, events, &document, DocumentStatus::Ready).await?;
             tracing::info!(document_id = %document.id, chunks = count, "document ingéré");
             Ok(count)
         }
         Err(e) => {
             tracing::warn!(document_id = %document.id, error = %e, "échec de l'ingestion");
-            if let Err(status_err) =
-                repositories::documents::set_status(db, document.id, DocumentStatus::Failed).await
+            // Échoue notamment si le document a été supprimé entre-temps :
+            // rien à notifier dans ce cas.
+            if let Err(status_err) = set_status(db, events, &document, DocumentStatus::Failed).await
             {
-                tracing::error!(document_id = %document.id, error = %status_err, "statut failed non enregistré");
+                tracing::warn!(document_id = %document.id, error = %status_err, "statut failed non enregistré");
             }
             Err(e)
         }
     }
+}
+
+/// Écrit le statut puis le notifie aux membres de l'org.
+async fn set_status(
+    db: &DatabaseConnection,
+    events: &Events,
+    document: &documents::Model,
+    status: DocumentStatus,
+) -> Result<(), DbErr> {
+    repositories::documents::set_status(db, document.id, status).await?;
+    events.publish(
+        document.org_id,
+        ServerMsg::DocStatus {
+            document_id: document.id,
+            status,
+        },
+    );
+    Ok(())
 }
 
 async fn run(
