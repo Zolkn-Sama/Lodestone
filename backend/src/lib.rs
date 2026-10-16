@@ -1,6 +1,7 @@
 pub mod config;
 pub mod dto;
 pub mod error;
+pub mod events;
 pub mod extractors;
 pub mod handlers;
 pub mod repositories;

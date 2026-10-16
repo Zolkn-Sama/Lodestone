@@ -6,9 +6,12 @@ use uuid::Uuid;
 use crate::{
     dto::documents::DocumentResponse,
     error::AppError,
+    events::Events,
     repositories::documents::{self, NewDocument},
     services::ingestion,
+    ws::protocol::ServerMsg,
 };
+use lodestone_core::document_status::DocumentStatus;
 use lodestone_llm::LlmClient;
 use lodestone_rag::SourceType;
 
@@ -28,6 +31,7 @@ pub struct Upload {
 /// La réponse part tout de suite : le client suit ensuite le statut.
 pub async fn upload(
     db: &DatabaseConnection,
+    events: &Events,
     llm: Arc<dyn LlmClient>,
     upload: Upload,
 ) -> Result<DocumentResponse, AppError> {
@@ -68,13 +72,22 @@ pub async fn upload(
     )
     .await?;
 
-    // Pas d'attente : l'ingestion journalise elle-même son résultat et met le
-    // document en `ready` ou `failed`.
+    events.publish(
+        document.org_id,
+        ServerMsg::DocStatus {
+            document_id: document.id,
+            status: DocumentStatus::Pending,
+        },
+    );
+
+    // Pas d'attente : l'ingestion journalise et notifie elle-même la suite
+    // (`processing`, puis `ready` ou `failed`).
     let db = db.clone();
+    let events = events.clone();
     let document_id = document.id;
     let bytes = upload.bytes;
     tokio::spawn(async move {
-        let _ = ingestion::ingest(&db, llm.as_ref(), document_id, bytes).await;
+        let _ = ingestion::ingest(&db, &events, llm.as_ref(), document_id, bytes).await;
     });
 
     DocumentResponse::try_from(document).map_err(|_| AppError::Internal)

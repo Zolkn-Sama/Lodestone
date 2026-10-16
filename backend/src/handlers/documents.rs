@@ -49,6 +49,7 @@ pub async fn upload(
 
     let document = services::documents::upload(
         &state.db,
+        &state.events,
         state.llm.clone(),
         Upload {
             org_id: member.org_id,

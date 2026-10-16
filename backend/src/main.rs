@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 //use Testcontainers::bollard::config;
 
 use lodestone_backend::config::Config;
+use lodestone_backend::events::Events;
 use lodestone_backend::router;
 use lodestone_backend::services::ingestion::EMBEDDING_DIMENSIONS;
 use lodestone_backend::state::AppState;
@@ -46,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         db,
         config: Arc::new(config),
         llm: Arc::new(llm),
+        events: Events::default(),
     };
     let port = state.config.app_port;
     let app = router::app_router(state);
