@@ -19,12 +19,17 @@ use testcontainers_modules::postgres::Postgres;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use lodestone_backend::{config::Config, router::app_router, state::AppState};
+use lodestone_backend::{
+    config::Config, router::app_router, services::ingestion::EMBEDDING_DIMENSIONS, state::AppState,
+};
+use lodestone_llm::MockLlmClient;
 use lodestone_migration::{Migrator, MigratorTrait};
 
 pub struct TestApp {
     router: Router,
     pub db: DatabaseConnection,
+    /// Le même client que celui de l'`AppState` : embeddings déterministes, sans réseau.
+    pub llm: Arc<MockLlmClient>,
     // Gardé en vie tant que le test tourne ; le conteneur est supprimé au drop.
     _pg: ContainerAsync<Postgres>,
 }
@@ -52,14 +57,17 @@ impl TestApp {
         let db = Database::connect(&url).await.expect("connexion Postgres");
         Migrator::up(&db, None).await.expect("migrations");
 
+        let llm = Arc::new(MockLlmClient::new(EMBEDDING_DIMENSIONS));
         let state = AppState {
             db: db.clone(),
             config: Arc::new(Config::new(url, "secret-de-test".into())),
+            llm: llm.clone(),
         };
 
         Self {
             router: app_router(state),
             db,
+            llm,
             _pg: pg,
         }
     }

@@ -4,7 +4,9 @@ use std::{sync::Arc, time::Duration};
 
 use lodestone_backend::config::Config;
 use lodestone_backend::router;
+use lodestone_backend::services::ingestion::EMBEDDING_DIMENSIONS;
 use lodestone_backend::state::AppState;
+use lodestone_llm::OpenAiCompatibleClient;
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -31,15 +33,24 @@ async fn main() -> anyhow::Result<()> {
         .sqlx_logging(false);
     let db = Database::connect(opt).await?;
 
-    // 4. État partagé + router.
+    // 4. Client LLM (embeddings) : Ollama par défaut, OpenAI si LLM_API_KEY est fourni.
+    let llm = OpenAiCompatibleClient::new(
+        config.llm_base_url.clone(),
+        config.llm_api_key.clone(),
+        config.embedding_model.clone(),
+        EMBEDDING_DIMENSIONS,
+    )?;
+
+    // 5. État partagé + router.
     let state = AppState {
         db,
         config: Arc::new(config),
+        llm: Arc::new(llm),
     };
     let port = state.config.app_port;
     let app = router::app_router(state);
 
-    // 5. Écoute et sert.
+    // 6. Écoute et sert.
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     info!("🚀 Lodestone v1: Fondation");
     info!("   Server starting...");
