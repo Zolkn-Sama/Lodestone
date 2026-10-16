@@ -1,6 +1,5 @@
 use axum::{Json, extract::State, response::IntoResponse};
 
-use serde_json::json;
 use validator::Validate;
 
 use crate::dto::auth::RefreshRequest;
