@@ -53,3 +53,5 @@ tower                  = { workspace = true, features = ["util"] }
 testcontainers         = { workspace = true }
 testcontainers-modules = { workspace = true }
 http-body-util         = { workspace = true }
+# Client WebSocket pour tester /ws (même version que celle qu'utilise axum).
+tokio-tungstenite      = "0.29.0"
