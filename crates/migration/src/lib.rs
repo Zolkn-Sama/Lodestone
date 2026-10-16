@@ -4,6 +4,7 @@ mod m20260706_153103_create_users_and_orgs;
 mod m20260809_131736_create_refresh_tokens;
 mod m20260810_130502_create_memberships; // <-- adapte au nom réel du fichier généré
 mod m20261016_120000_create_invitations;
+mod m20261016_140000_create_documents_and_chunks;
 
 pub struct Migrator;
 
@@ -15,6 +16,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260809_131736_create_refresh_tokens::Migration),
             Box::new(m20260810_130502_create_memberships::Migration),
             Box::new(m20261016_120000_create_invitations::Migration),
+            Box::new(m20261016_140000_create_documents_and_chunks::Migration),
         ]
     }
 }
