@@ -1,6 +1,5 @@
 use axum::{Json, extract::State, response::IntoResponse};
 
-use serde_json::json;
 use validator::Validate;
 
 use crate::dto::auth::RefreshRequest;
@@ -17,7 +16,8 @@ pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    body.validate().map_err(|e| AppError::InvalidInput(e.to_string()))?;
+    body.validate()
+        .map_err(|e| AppError::InvalidInput(e.to_string()))?;
 
     let tokens = services::auth::register(
         &state.db,
@@ -25,7 +25,7 @@ pub async fn register(
         body.email,
         body.password,
     )
-        .await?;
+    .await?;
 
     Ok((axum::http::StatusCode::CREATED, Json(tokens)))
 }
@@ -40,25 +40,21 @@ pub async fn login(
         body.email,
         body.password,
     )
-        .await?;
+    .await?;
 
     Ok(Json(tokens))
 }
 
-use crate::{
-    dto::auth::UserResponse,
-    extractors::auth_user::AuthUser,
-    repositories::users,
-};
+use crate::{dto::auth::UserResponse, extractors::auth_user::AuthUser, repositories::users};
 
 pub async fn me(
     State(state): State<AppState>,
-    user: AuthUser,                       // <-- la magie : exige un token valide
+    user: AuthUser, // <-- la magie : exige un token valide
 ) -> Result<impl IntoResponse, AppError> {
     // L'extracteur nous a donné l'id ; on recharge l'utilisateur frais depuis la base.
     let user = users::find_by_id(&state.db, user.user_id)
         .await?
-        .ok_or(AppError::Unauthorized)?;   // token valide mais user supprimé -> 401
+        .ok_or(AppError::Unauthorized)?; // token valide mais user supprimé -> 401
 
     Ok(Json(UserResponse::from(user)))
 }
@@ -67,7 +63,8 @@ pub async fn refresh(
     State(state): State<AppState>,
     Json(body): Json<RefreshRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let tokens = services::auth::refresh(&state.db, &state.config.jwt_secret, body.refresh_token).await?;
+    let tokens =
+        services::auth::refresh(&state.db, &state.config.jwt_secret, body.refresh_token).await?;
     Ok(Json(tokens))
 }
 

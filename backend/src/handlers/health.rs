@@ -1,9 +1,8 @@
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 
+use crate::state::AppState;
 use serde_json::json;
 use tracing::warn;
-use crate::state::AppState;
-
 
 pub async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     match state.db.ping().await {

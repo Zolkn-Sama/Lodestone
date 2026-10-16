@@ -32,6 +32,8 @@ impl FromRequestParts<AppState> for AuthUser {
         let claims = decode_access_token(token, &state.config.jwt_secret)
             .map_err(|_| AppError::Unauthorized)?;
 
-        Ok(AuthUser { user_id: claims.sub })
+        Ok(AuthUser {
+            user_id: claims.sub,
+        })
     }
 }

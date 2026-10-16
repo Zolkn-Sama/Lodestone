@@ -1,8 +1,8 @@
-use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
-    Argon2,
-};
 use crate::error::AuthError;
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+};
 
 /// Hache un mot de passe en clair avec argon2id.
 /// Le résultat est une "PHC string" qui contient DÉJÀ le sel et les paramètres.
@@ -39,8 +39,8 @@ mod tests {
     #[test]
     fn hash_puis_verifie() {
         let hash = hash_password("motdepasse123").unwrap();
-        assert!(verify_password("motdepasse123", &hash).unwrap());       // bon mdp -> true
-        assert!(!verify_password("mauvais", &hash).unwrap());            // mauvais mdp -> false
+        assert!(verify_password("motdepasse123", &hash).unwrap()); // bon mdp -> true
+        assert!(!verify_password("mauvais", &hash).unwrap()); // mauvais mdp -> false
     }
 
     #[test]

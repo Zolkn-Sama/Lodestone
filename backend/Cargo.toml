@@ -52,3 +52,4 @@ users = "0.11.0"
 tower                  = { workspace = true, features = ["util"] }
 testcontainers         = { workspace = true }
 testcontainers-modules = { workspace = true }
+http-body-util         = { workspace = true }

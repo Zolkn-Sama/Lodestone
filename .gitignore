@@ -3,3 +3,5 @@
 /docs/Lodestone_Commandes.md
 .DS_Store
 gh_seed_issues.sh
+.env
+.env.example

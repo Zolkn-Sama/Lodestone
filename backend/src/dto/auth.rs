@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use uuid::Uuid;
 use sea_orm::prelude::DateTimeWithTimeZone;
+use uuid::Uuid;
 
 /// Ce que le client ENVOIE pour s'inscrire.
 #[derive(Debug, Deserialize, Validate)]
@@ -43,7 +43,10 @@ pub struct UserResponse {
 
 impl From<lodestone_entity::users::Model> for UserResponse {
     fn from(u: lodestone_entity::users::Model) -> Self {
-        Self { id: u.id, email: u.email, created_at: u.created_at }
+        Self {
+            id: u.id,
+            email: u.email,
+            created_at: u.created_at,
+        }
     }
 }
-

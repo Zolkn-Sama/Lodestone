@@ -20,8 +20,8 @@ pub async fn create(
         revoked_at: Set(None),
         ..Default::default()
     }
-        .insert(db)
-        .await
+    .insert(db)
+    .await
 }
 
 pub async fn find_by_hash(

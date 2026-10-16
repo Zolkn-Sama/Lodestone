@@ -1,5 +1,4 @@
-
-pub mod password;
-pub mod jwt;
 pub mod error;
+pub mod jwt;
+pub mod password;
 pub mod refresh;

@@ -1,4 +1,3 @@
-
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     #[error("échec d'encodage/décodage du JWT")]

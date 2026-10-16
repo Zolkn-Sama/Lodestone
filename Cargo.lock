@@ -2071,6 +2071,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "futures",
+ "http-body-util",
  "lodestone-auth",
  "lodestone-core",
  "lodestone-entity",

@@ -1,15 +1,17 @@
 use lodestone_entity::users;
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, Set,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
+    QueryFilter, Set,
 };
 
+use sea_orm::sea_query::{Expr, Func};
 use uuid::Uuid;
 
 /// Crée un utilisateur en base et renvoie la ligne réellement insérée.
 ///
 /// Note : ce repositories ne HACHE PAS le mot de passe. Il reçoit un
-/// `password_hash` déjà haché (ce sera le boulot du services, semaine 3).
+/// `password_hash` déjà haché (ce sera le boulot du service, semaine 3).
 /// Le repositories ne fait que stocker.
 pub async fn create(
     db: &DatabaseConnection,
@@ -41,7 +43,22 @@ pub async fn find_by_email(
         .await
 }
 
+/// Comme `find_by_email`, mais sans tenir compte de la casse.
+/// `email` doit déjà être en minuscules.
+pub async fn find_by_email_ci<C: ConnectionTrait>(
+    db: &C,
+    email: &str,
+) -> Result<Option<users::Model>, DbErr> {
+    users::Entity::find()
+        .filter(Expr::expr(Func::lower(Expr::col(users::Column::Email))).eq(email))
+        .one(db)
+        .await
+}
+
 /// Cherche un utilisateur par id. `Ok(None)` s'il n'existe pas.
-pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> Result<Option<users::Model>, DbErr> {
+pub async fn find_by_id<C: ConnectionTrait>(
+    db: &C,
+    id: Uuid,
+) -> Result<Option<users::Model>, DbErr> {
     users::Entity::find_by_id(id).one(db).await
 }
