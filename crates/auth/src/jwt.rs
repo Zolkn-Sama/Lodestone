@@ -1,8 +1,8 @@
+use crate::error::AuthError;
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::error::AuthError;
 
 /// Le contenu (payload) du JWT. Rappel : c'est SIGNÉ, pas chiffré —
 /// donc lisible par tous. On n'y met JAMAIS de secret (pas de password_hash).
@@ -36,10 +36,30 @@ pub fn create_access_token(user_id: Uuid, secret: &str) -> Result<String, AuthEr
 
 /// Décode et VALIDE un token (signature + expiration). Renvoie les claims.
 pub fn decode_access_token(token: &str, secret: &str) -> Result<Claims, AuthError> {
-    let data = decode::<Claims>( // <-- Claims, pas User
-                                 token,
-                                 &DecodingKey::from_secret(secret.as_bytes()),
-                                 &Validation::default(), // vérifie la signature ET l'expiration
+    let data = decode::<Claims>(
+        // <-- Claims, pas User
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::default(), // vérifie la signature ET l'expiration
     )?;
     Ok(data.claims)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aller_retour() {
+        let id = Uuid::new_v4();
+        let token = create_access_token(id, "secret").expect("encode");
+        let claims = decode_access_token(&token, "secret").expect("decode");
+        assert_eq!(claims.sub, id);
+    }
+
+    #[test]
+    fn mauvais_secret_rejete() {
+        let token = create_access_token(Uuid::new_v4(), "secret").expect("encode");
+        assert!(decode_access_token(&token, "autre").is_err());
+    }
 }
