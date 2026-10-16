@@ -1,1 +1,1 @@
-//! lodestone-core
+pub mod role;

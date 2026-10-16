@@ -5,9 +5,10 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-argon2       = { workspace = true }
-jsonwebtoken = { workspace = true }
-serde        = { workspace = true }
-thiserror    = { workspace = true }
-uuid         = { workspace = true }
-chrono       = { workspace = true }
+argon2       = { workspace = true }   # hachage mot de passe (password.rs)
+jsonwebtoken = { workspace = true }   # JWT (jwt.rs)
+serde        = { workspace = true }   # dériver Serialize/Deserialize sur les Claims
+thiserror    = { workspace = true }   # AuthError
+chrono       = { workspace = true }   # calcul des dates d'expiration (exp / iat)
+uuid         = { workspace = true }   # l'id user dans le token
+sha2 = { workspace = true }

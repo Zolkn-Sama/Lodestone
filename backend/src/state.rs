@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use sea_orm::DatabaseConnection;
+use std::sync::Arc;
 
 use crate::config::Config;
 

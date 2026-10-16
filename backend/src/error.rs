@@ -1,12 +1,10 @@
-
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json
 };
 use serde::Serialize;
 use thiserror::Error;
-
 
 /// Alias pratique : handlers renvoient `Result<Json<...>>`.
 pub type Result<T> = std::result::Result<T, AppError>;
@@ -23,11 +21,20 @@ pub enum AppError {
     #[error("Unauthorized")]
     Unauthorized,
 
-    #[error(transparent)]
-    Database(#[from] sea_orm::DbErr),
+    #[error("Forbidden")]
+    Forbidden,
+
+    #[error("Conflict: {0}")]
+    Conflict(String),
 
     #[error("Internal server error")]
     Internal,
+
+    #[error(transparent)]
+    Database(#[from] sea_orm::DbErr),
+
+    #[error(transparent)]
+    Jwt(#[from] lodestone_auth::error::AuthError),
 }
 
 // ============================================================================
@@ -46,11 +53,28 @@ impl IntoResponse for AppError {
             AppError::NotFound => (StatusCode::NOT_FOUND, "Not found".to_string()),
             AppError::InvalidInput(m) => (StatusCode::BAD_REQUEST, m.to_string()),
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden".to_string()),
+            AppError::Conflict(m) => (StatusCode::CONFLICT, m.to_string()),
+            AppError::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
+
             AppError::Database(e) => {
                 tracing::error!(error = %e, "Database error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "Database error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Database error".to_string(),
+                )
             }
-            AppError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string()),
+
+            AppError::Jwt(e) => {
+                tracing::error!(error = %e, "erreur JWT");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Erreur interne".to_string(),
+                )
+            }
         };
 
         let body = ErrorResponse {
