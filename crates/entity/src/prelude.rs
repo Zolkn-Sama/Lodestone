@@ -3,4 +3,5 @@
 pub use super::invitations::Entity as Invitations;
 pub use super::memberships::Entity as Memberships;
 pub use super::organizations::Entity as Organizations;
+pub use super::refresh_tokens::Entity as RefreshTokens;
 pub use super::users::Entity as Users;
