@@ -6,8 +6,12 @@ use axum::{
 };
 
 use crate::{
+    dto::documents::DocumentResponse,
     error::AppError,
-    extractors::org_member::{Admin, OrgMember},
+    extractors::{
+        document_access::DocumentAccess,
+        org_member::{Admin, OrgMember},
+    },
     services::{self, documents::Upload},
     state::AppState,
 };
@@ -57,6 +61,30 @@ pub async fn upload(
     .await?;
 
     Ok((StatusCode::ACCEPTED, Json(document)))
+}
+
+/// GET /api/orgs/{id}/documents — membre : titre + statut de chaque document.
+pub async fn list(
+    State(state): State<AppState>,
+    member: OrgMember,
+) -> Result<impl IntoResponse, AppError> {
+    let documents = services::documents::list(&state.db, member.org_id).await?;
+    Ok(Json(documents))
+}
+
+/// GET /api/documents/{id} — membre de l'org du document : détail + statut.
+pub async fn get(access: DocumentAccess) -> Result<impl IntoResponse, AppError> {
+    let document = DocumentResponse::try_from(access.document).map_err(|_| AppError::Internal)?;
+    Ok(Json(document))
+}
+
+/// DELETE /api/documents/{id} — admin de l'org du document.
+pub async fn delete(
+    State(state): State<AppState>,
+    access: DocumentAccess<Admin>,
+) -> Result<impl IntoResponse, AppError> {
+    services::documents::delete(&state.db, access.document.id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Garde le 413 d'axum quand la limite de taille est dépassée.

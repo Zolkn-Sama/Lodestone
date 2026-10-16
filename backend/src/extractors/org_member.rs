@@ -54,28 +54,8 @@ impl<R: RequiredRole + Send + Sync> FromRequestParts<AppState> for OrgMember<R> 
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let user = AuthUser::from_request_parts(parts, state).await?;
-
-        // HashMap : marche quelle que soit la forme de la route
-        // (`/api/orgs/{id}` comme `/api/orgs/{id}/members/{user_id}`).
-        let Path(params) = Path::<HashMap<String, String>>::from_request_parts(parts, state)
-            .await
-            .map_err(|_| AppError::NotFound)?;
-        let org_id = params
-            .get("id")
-            .and_then(|s| s.parse::<Uuid>().ok())
-            .ok_or(AppError::NotFound)?;
-
-        let membership = repositories::memberships::find(&state.db, user.user_id, org_id)
-            .await?
-            .ok_or(AppError::NotFound)?;
-        let role: Role = membership.role.parse().map_err(|e| {
-            tracing::error!(error = %e, membership_id = %membership.id, "rôle invalide en base");
-            AppError::Internal
-        })?;
-
-        if !role.at_least(R::ROLE) {
-            return Err(AppError::Forbidden);
-        }
+        let org_id = path_id(parts, state).await?;
+        let role = require_role(state, user.user_id, org_id, R::ROLE).await?;
 
         Ok(OrgMember {
             user_id: user.user_id,
@@ -84,4 +64,39 @@ impl<R: RequiredRole + Send + Sync> FromRequestParts<AppState> for OrgMember<R> 
             _required: PhantomData,
         })
     }
+}
+
+/// Le segment `{id}` de l'URL, en UUID. Absent ou invalide -> 404.
+/// HashMap : marche quelle que soit la forme de la route
+/// (`/api/orgs/{id}` comme `/api/orgs/{id}/members/{user_id}`).
+pub(crate) async fn path_id(parts: &mut Parts, state: &AppState) -> Result<Uuid, AppError> {
+    let Path(params) = Path::<HashMap<String, String>>::from_request_parts(parts, state)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    params
+        .get("id")
+        .and_then(|s| s.parse::<Uuid>().ok())
+        .ok_or(AppError::NotFound)
+}
+
+/// Rôle de l'utilisateur dans l'org, s'il atteint `required`.
+/// Pas membre -> 404 (on ne révèle pas l'existence), rôle insuffisant -> 403.
+pub(crate) async fn require_role(
+    state: &AppState,
+    user_id: Uuid,
+    org_id: Uuid,
+    required: Role,
+) -> Result<Role, AppError> {
+    let membership = repositories::memberships::find(&state.db, user_id, org_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let role: Role = membership.role.parse().map_err(|e| {
+        tracing::error!(error = %e, membership_id = %membership.id, "rôle invalide en base");
+        AppError::Internal
+    })?;
+
+    if !role.at_least(required) {
+        return Err(AppError::Forbidden);
+    }
+    Ok(role)
 }

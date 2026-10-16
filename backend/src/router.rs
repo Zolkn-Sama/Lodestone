@@ -41,7 +41,12 @@ pub fn app_router(state: AppState) -> Router {
         .route(
             "/api/orgs/{id}/documents",
             post(handlers::documents::upload)
-                .layer(DefaultBodyLimit::max(handlers::documents::MAX_UPLOAD_BYTES)),
+                .layer(DefaultBodyLimit::max(handlers::documents::MAX_UPLOAD_BYTES))
+                .get(handlers::documents::list),
+        )
+        .route(
+            "/api/documents/{id}",
+            get(handlers::documents::get).delete(handlers::documents::delete),
         )
         .route(
             "/api/orgs/{id}/members/{user_id}",
