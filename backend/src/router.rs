@@ -30,6 +30,14 @@ pub fn app_router(state: AppState) -> Router {
         )
         .route("/api/orgs/{id}/members", get(handlers::members::list))
         .route(
+            "/api/orgs/{id}/invitations",
+            post(handlers::invitations::create),
+        )
+        .route(
+            "/api/invitations/accept",
+            post(handlers::invitations::accept),
+        )
+        .route(
             "/api/orgs/{id}/members/{user_id}",
             patch(handlers::members::change_role).delete(handlers::members::remove),
         )

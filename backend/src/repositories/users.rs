@@ -5,6 +5,7 @@ use sea_orm::{
     QueryFilter, Set,
 };
 
+use sea_orm::sea_query::{Expr, Func};
 use uuid::Uuid;
 
 /// Crée un utilisateur en base et renvoie la ligne réellement insérée.
@@ -39,6 +40,18 @@ pub async fn find_by_email(
     users::Entity::find()
         .filter(users::Column::Email.eq(email)) // WHERE email = ...
         .one(db) // au plus une ligne
+        .await
+}
+
+/// Comme `find_by_email`, mais sans tenir compte de la casse.
+/// `email` doit déjà être en minuscules.
+pub async fn find_by_email_ci<C: ConnectionTrait>(
+    db: &C,
+    email: &str,
+) -> Result<Option<users::Model>, DbErr> {
+    users::Entity::find()
+        .filter(Expr::expr(Func::lower(Expr::col(users::Column::Email))).eq(email))
+        .one(db)
         .await
 }
 
