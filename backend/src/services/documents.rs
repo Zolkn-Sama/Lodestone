@@ -79,3 +79,24 @@ pub async fn upload(
 
     DocumentResponse::try_from(document).map_err(|_| AppError::Internal)
 }
+
+pub async fn list(
+    db: &DatabaseConnection,
+    org_id: Uuid,
+) -> Result<Vec<DocumentResponse>, AppError> {
+    documents::list_for_org(db, org_id)
+        .await?
+        .into_iter()
+        .map(|d| DocumentResponse::try_from(d).map_err(|_| AppError::Internal))
+        .collect()
+}
+
+/// Supprime un document et ses fragments. Si son ingestion tourne encore,
+/// elle échouera à l'écriture (le document n'existe plus) sans rien recréer.
+pub async fn delete(db: &DatabaseConnection, document_id: Uuid) -> Result<(), AppError> {
+    if documents::delete(db, document_id).await? {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
+}

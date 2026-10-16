@@ -1,4 +1,7 @@
-use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, EntityTrait, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use uuid::Uuid;
 
 use lodestone_core::document_status::DocumentStatus;
@@ -49,4 +52,24 @@ pub async fn set_status<C: ConnectionTrait>(
     .update(conn)
     .await?;
     Ok(())
+}
+
+/// Les documents d'une org, du plus récent au plus ancien.
+pub async fn list_for_org<C: ConnectionTrait>(
+    conn: &C,
+    org_id: Uuid,
+) -> Result<Vec<documents::Model>, DbErr> {
+    documents::Entity::find()
+        .filter(documents::Column::OrgId.eq(org_id))
+        .order_by_desc(documents::Column::CreatedAt)
+        .order_by_desc(documents::Column::Id) // ordre stable à created_at égal
+        .all(conn)
+        .await
+}
+
+/// Supprime le document ; ses fragments partent avec (FK `ON DELETE CASCADE`).
+/// Renvoie `true` si une ligne a été supprimée.
+pub async fn delete<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<bool, DbErr> {
+    let res = documents::Entity::delete_by_id(id).exec(conn).await?;
+    Ok(res.rows_affected > 0)
 }
