@@ -1,5 +1,6 @@
 use axum::{
     Router,
+    extract::DefaultBodyLimit,
     routing::{get, patch, post},
 };
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -36,6 +37,11 @@ pub fn app_router(state: AppState) -> Router {
         .route(
             "/api/invitations/accept",
             post(handlers::invitations::accept),
+        )
+        .route(
+            "/api/orgs/{id}/documents",
+            post(handlers::documents::upload)
+                .layer(DefaultBodyLimit::max(handlers::documents::MAX_UPLOAD_BYTES)),
         )
         .route(
             "/api/orgs/{id}/members/{user_id}",
