@@ -53,7 +53,7 @@ pgvector = "0.4.1"
 
 # --- Authentification ---
 jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
-argon2 = "0.5.3"
+argon2 = { version = "0.5.3", features = ["std"] }
 
 # --- Client LLM : Ollama OU OpenAI (même API compatible) ---
 reqwest = { version = "0.13.4", features = ["json", "stream", "rustls"] }
