@@ -5,6 +5,8 @@ pub struct Config {
     /// Clé de l'API LLM (OpenAI) ; inutile pour Ollama.
     pub llm_api_key: Option<String>,
     pub embedding_model: String,
+    /// Modèle de génération des réponses (`llama3.1`, `qwen2.5`…).
+    pub chat_model: String,
     pub(crate) jwt_secret: String,
     pub app_port: u16,
 }
@@ -17,6 +19,7 @@ impl Config {
             llm_base_url: "http://localhost:11434/v1".to_string(),
             llm_api_key: None,
             embedding_model: "nomic-embed-text".to_string(),
+            chat_model: "llama3.1".to_string(),
             jwt_secret,
             app_port: 0,
         }
@@ -34,6 +37,7 @@ impl Config {
             llm_api_key: std::env::var("LLM_API_KEY").ok().filter(|k| !k.is_empty()),
             embedding_model: std::env::var("EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "nomic-embed-text".to_string()),
+            chat_model: std::env::var("CHAT_MODEL").unwrap_or_else(|_| "llama3.1".to_string()),
             jwt_secret: required("JWT_SECRET")?,
             app_port: std::env::var("APP_PORT")
                 .ok()
@@ -50,6 +54,7 @@ impl std::fmt::Debug for Config {
             .field("llm_base_url", &self.llm_base_url)
             .field("llm_api_key", &self.llm_api_key.as_ref().map(|_| "***"))
             .field("embedding_model", &self.embedding_model)
+            .field("chat_model", &self.chat_model)
             .field("jwt_secret", &"***")
             .field("app_port", &self.app_port)
             .finish()

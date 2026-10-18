@@ -47,6 +47,11 @@ pub struct TestUser {
 
 impl TestApp {
     pub async fn spawn() -> Self {
+        Self::spawn_with_llm(MockLlmClient::new(EMBEDDING_DIMENSIONS)).await
+    }
+
+    /// Comme `spawn`, avec un mock configuré (réponse, lenteur, pannes…).
+    pub async fn spawn_with_llm(llm: MockLlmClient) -> Self {
         // Même image que docker-compose : pgvector sera là quand le RAG arrivera.
         let pg = Postgres::default()
             .with_name("pgvector/pgvector")
@@ -60,7 +65,7 @@ impl TestApp {
         let db = connect_with_retry(&url).await;
         Migrator::up(&db, None).await.expect("migrations");
 
-        let llm = Arc::new(MockLlmClient::new(EMBEDDING_DIMENSIONS));
+        let llm = Arc::new(llm);
         let events = Events::default();
         let state = AppState {
             db: db.clone(),
