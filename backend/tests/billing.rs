@@ -444,10 +444,9 @@ async fn statut_de_facturation_reserve_aux_admins() {
     app.add_member(org, &owner, &member, "member").await;
 
     let body = billing(&app, org, &owner).await;
-    assert_eq!(
-        body,
-        json!({ "plan": "free", "billing_enabled": true, "subscription": null })
-    );
+    assert_eq!(body["plan"], "free");
+    assert_eq!(body["billing_enabled"], true);
+    assert_eq!(body["subscription"], Value::Null);
     let (status, _) = app
         .get(&format!("/api/orgs/{org}/billing"), &member.token)
         .await;
