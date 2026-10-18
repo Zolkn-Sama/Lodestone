@@ -91,7 +91,12 @@ async fn l_owner_obtient_une_page_de_paiement() {
     assert_eq!(requests.len(), 1);
     let req = &requests[0];
     assert_eq!(req.org_id, org);
-    assert_eq!(req.seats, 2, "un siège par membre");
+    assert_eq!(req.items.len(), 1, "une seule ligne : l'abonnement Pro");
+    assert_eq!(req.items[0].quantity, 2, "un siège par membre");
+    assert!(
+        req.metadata
+            .contains(&("product".to_string(), "pro".to_string()))
+    );
     assert_eq!(req.customer_email, owner.email);
     assert_eq!(
         req.success_url,
@@ -125,7 +130,7 @@ async fn session_reservee_a_l_owner_d_une_org_free() {
 
     for (plan, message) in [
         (Plan::Pro, "déjà en Pro"),
-        (Plan::Sovereign, "contrat dédié"),
+        (Plan::Sovereign, "souscription Sovereign"),
     ] {
         organizations::set_plan(&app.db, org, plan)
             .await

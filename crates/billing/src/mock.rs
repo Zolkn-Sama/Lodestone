@@ -89,6 +89,8 @@ impl MockPaymentProvider {
         PriceInfo {
             currency: "eur".into(),
             interval: Some(interval.into()),
+            one_time: false,
+            unit_amount: None,
             tiered_volume: true,
             tiers: vec![
                 PriceTier {
@@ -102,6 +104,18 @@ impl MockPaymentProvider {
                     unit_amount: Some(seat),
                 },
             ],
+        }
+    }
+
+    /// Prix simple : `amount` centimes, récurrent (`Some(interval)`) ou ponctuel (`None`).
+    pub fn simple_price(interval: Option<&str>, amount: u64) -> PriceInfo {
+        PriceInfo {
+            currency: "eur".into(),
+            interval: interval.map(str::to_string),
+            one_time: interval.is_none(),
+            unit_amount: Some(amount),
+            tiered_volume: false,
+            tiers: Vec::new(),
         }
     }
 

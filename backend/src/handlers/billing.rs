@@ -71,17 +71,36 @@ pub async fn status(
     State(state): State<AppState>,
     member: OrgMember<Admin>,
 ) -> Result<impl IntoResponse, AppError> {
-    let annual_available = state
-        .config
-        .stripe
-        .as_ref()
-        .is_some_and(|s| s.pro_annual_price_id.is_some());
+    let stripe = state.config.stripe.as_ref();
     let response = billing::status(
         &state.db,
-        state.billing.is_some(),
-        annual_available,
-        state.config.pro_pricing,
+        billing::StatusContext {
+            billing_enabled: state.billing.is_some(),
+            annual_available: stripe.is_some_and(|s| s.pro_annual_price_id.is_some()),
+            sovereign_checkout_available: state.billing.is_some()
+                && stripe.is_some_and(|s| s.sovereign_prices.is_some()),
+            pricing: state.config.pro_pricing,
+            sovereign_pricing: state.config.sovereign_pricing,
+        },
         member.org_id,
+    )
+    .await?;
+    Ok(Json(response))
+}
+
+/// POST /api/orgs/{id}/billing/sovereign/checkout — owner d'une org Sovereign :
+/// licence annuelle (+ mise en service si jamais payée).
+pub async fn sovereign_checkout(
+    State(state): State<AppState>,
+    member: OrgMember<Owner>,
+) -> Result<impl IntoResponse, AppError> {
+    let response = billing::start_sovereign_checkout(
+        &state.db,
+        state.billing.as_deref(),
+        state.config.stripe.as_ref(),
+        &state.config.app_base_url,
+        member.org_id,
+        member.user_id,
     )
     .await?;
     Ok(Json(response))

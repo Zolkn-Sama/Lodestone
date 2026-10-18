@@ -1,5 +1,6 @@
-//! Abonnement Pro via Stripe : session de paiement (mensuelle ou annuelle),
-//! changement de périodicité, puis webhooks qui font évoluer le plan de l'org.
+//! Abonnements via Stripe : Pro (mensuel ou annuel, changement de périodicité)
+//! et Sovereign (licence annuelle + mise en service facturée une seule fois),
+//! puis webhooks qui font évoluer l'abonnement et le plan de l'org.
 //! Les quotas lisent le plan en base à chaque action : un changement de plan
 //! est donc effectif immédiatement.
 
@@ -19,13 +20,38 @@ use crate::{
     },
 };
 use lodestone_billing::{
-    BillingEvent, CheckoutRequest, PaymentProvider, PriceInfo, PriceTier, SubscriptionState,
-    SubscriptionStatus, WebhookEvent,
+    BillingEvent, CheckoutItem, CheckoutRequest, PaymentProvider, PriceInfo, PriceTier,
+    SubscriptionState, SubscriptionStatus, WebhookEvent,
 };
 use lodestone_core::{
     plan::Plan,
-    pricing::{BillingInterval, ProPricing, Quote},
+    pricing::{BillingInterval, ProPricing, Quote, SovereignPricing},
 };
+
+/// Produit d'un abonnement (métadonnée `product` côté Stripe).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Product {
+    Pro,
+    Sovereign,
+}
+
+impl Product {
+    fn as_str(self) -> &'static str {
+        match self {
+            Product::Pro => "pro",
+            Product::Sovereign => "sovereign",
+        }
+    }
+
+    /// Valeur absente ou inconnue : Pro (les premiers abonnements n'avaient pas l'étiquette).
+    fn parse(s: Option<&str>) -> Self {
+        if s == Some("sovereign") {
+            Product::Sovereign
+        } else {
+            Product::Pro
+        }
+    }
+}
 
 const NOT_CONFIGURED: &str = "la facturation n'est pas configurée sur ce serveur";
 const UNAVAILABLE: &str = "le service de paiement est momentanément indisponible";
@@ -91,6 +117,27 @@ pub struct BillingResponse {
     /// Mensuel et annuel pour les sièges actuels (absent en Sovereign).
     pub quotes: Option<Quotes>,
     pub switch_policy: SwitchPolicy,
+    /// Tarif et mise en service, pour une org Sovereign uniquement.
+    pub sovereign: Option<SovereignBilling>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SovereignBilling {
+    pub pricing: SovereignPricing,
+    /// Paiement par Stripe possible (prix Sovereign configurés).
+    pub checkout_available: bool,
+    /// Date de paiement de la mise en service (horodatage Unix), si payée.
+    pub setup_fee_paid_at: Option<i64>,
+    /// Montant de la prochaine souscription : licence, plus la mise en service
+    /// si elle n'a jamais été payée.
+    pub next_checkout_cents: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SovereignCheckoutResponse {
+    pub url: String,
+    /// La mise en service figure dans cette session (jamais si déjà payée).
+    pub setup_fee_included: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -154,7 +201,7 @@ pub async fn start_checkout(
         Plan::Pro => return Err(AppError::Conflict("l'organisation est déjà en Pro".into())),
         Plan::Sovereign => {
             return Err(AppError::Conflict(
-                "le plan Sovereign fait l'objet d'un contrat dédié".into(),
+                "organisation Sovereign : utilisez la souscription Sovereign".into(),
             ));
         }
     }
@@ -168,8 +215,11 @@ pub async fn start_checkout(
     let session = provider
         .create_checkout(&CheckoutRequest {
             org_id,
-            price_id,
-            seats,
+            items: vec![CheckoutItem {
+                price_id,
+                quantity: seats,
+            }],
+            metadata: vec![("product".into(), Product::Pro.as_str().into())],
             customer_email: owner.email,
             success_url: format!("{app_base_url}/orgs/{org_id}/billing?checkout=success"),
             cancel_url: format!("{app_base_url}/orgs/{org_id}/billing?checkout=cancel"),
@@ -187,13 +237,113 @@ fn seats_u32(n: i64) -> u32 {
     u32::try_from(n.max(1)).unwrap_or(1)
 }
 
+/// Activation Sovereign : licence annuelle, plus la mise en service si elle
+/// n'a jamais été payée (ligne ponctuelle : Stripe ne la facture que sur la
+/// première facture, jamais aux renouvellements).
+pub async fn start_sovereign_checkout(
+    db: &DatabaseConnection,
+    provider: Option<&dyn PaymentProvider>,
+    stripe: Option<&StripeConfig>,
+    app_base_url: &str,
+    org_id: Uuid,
+    owner_id: Uuid,
+) -> Result<SovereignCheckoutResponse, AppError> {
+    let (provider, stripe) = provider_or_unavailable(provider, stripe)?;
+    let prices = stripe.sovereign_prices.as_ref().ok_or_else(|| {
+        AppError::Unavailable(
+            "la souscription Sovereign n'est pas configurée sur ce serveur".into(),
+        )
+    })?;
+
+    let org = repositories::organizations::find_by_id(db, org_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if plan_of(&org) != Plan::Sovereign {
+        return Err(AppError::Conflict(
+            "réservé aux organisations Sovereign (contrat préalable avec Lodestone)".into(),
+        ));
+    }
+    if repositories::subscriptions::find_by_org(db, org_id)
+        .await?
+        .is_some_and(|s| {
+            Product::parse(Some(&s.product)) == Product::Sovereign
+                && SubscriptionStatus::parse(&s.status).grants_pro()
+        })
+    {
+        return Err(AppError::Conflict(
+            "la licence Sovereign est déjà active".into(),
+        ));
+    }
+
+    let setup_paid = repositories::organizations::sovereign_setup_paid_at(db, org_id)
+        .await?
+        .is_some();
+    let mut items = vec![CheckoutItem {
+        price_id: prices.license_price_id.clone(),
+        quantity: 1,
+    }];
+    if !setup_paid {
+        items.push(CheckoutItem {
+            price_id: prices.setup_price_id.clone(),
+            quantity: 1,
+        });
+    }
+    let owner = repositories::users::find_by_id(db, owner_id)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
+
+    let session = provider
+        .create_checkout(&CheckoutRequest {
+            org_id,
+            items,
+            metadata: vec![
+                ("product".into(), Product::Sovereign.as_str().into()),
+                (
+                    "setup_fee".into(),
+                    if setup_paid {
+                        "already_paid"
+                    } else {
+                        "included"
+                    }
+                    .into(),
+                ),
+            ],
+            customer_email: owner.email,
+            success_url: format!("{app_base_url}/orgs/{org_id}/billing?checkout=success"),
+            cancel_url: format!("{app_base_url}/orgs/{org_id}/billing?checkout=cancel"),
+        })
+        .await
+        .map_err(upstream(
+            org_id,
+            "création de la session Sovereign impossible",
+        ))?;
+
+    Ok(SovereignCheckoutResponse {
+        url: session.url,
+        setup_fee_included: !setup_paid,
+    })
+}
+
+pub struct StatusContext {
+    pub billing_enabled: bool,
+    pub annual_available: bool,
+    pub sovereign_checkout_available: bool,
+    pub pricing: ProPricing,
+    pub sovereign_pricing: SovereignPricing,
+}
+
 pub async fn status(
     db: &DatabaseConnection,
-    billing_enabled: bool,
-    annual_available: bool,
-    pricing: ProPricing,
+    ctx: StatusContext,
     org_id: Uuid,
 ) -> Result<BillingResponse, AppError> {
+    let StatusContext {
+        billing_enabled,
+        annual_available,
+        sovereign_checkout_available,
+        pricing,
+        sovereign_pricing,
+    } = ctx;
     let org = repositories::organizations::find_by_id(db, org_id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -222,7 +372,20 @@ pub async fn status(
         }
     };
 
+    let sovereign = if plan == Plan::Sovereign {
+        let paid_at = repositories::organizations::sovereign_setup_paid_at(db, org_id).await?;
+        Some(SovereignBilling {
+            pricing: sovereign_pricing,
+            checkout_available: sovereign_checkout_available,
+            setup_fee_paid_at: paid_at.map(|d| d.timestamp()),
+            next_checkout_cents: sovereign_pricing.first_invoice_cents(paid_at.is_some()),
+        })
+    } else {
+        None
+    };
+
     Ok(BillingResponse {
+        sovereign,
         plan,
         billing_enabled,
         annual_available,
@@ -257,7 +420,10 @@ pub async fn change_interval(
     let txn = db.begin().await?;
     let sub = repositories::subscriptions::find_by_org_for_update(&txn, org_id)
         .await?
-        .filter(|s| SubscriptionStatus::parse(&s.status).grants_pro())
+        .filter(|s| {
+            Product::parse(Some(&s.product)) == Product::Pro
+                && SubscriptionStatus::parse(&s.status).grants_pro()
+        })
         .ok_or_else(|| AppError::Conflict("aucun abonnement Pro actif".into()))?;
     let (Some(item_id), Some(current)) = (
         sub.stripe_item_id.as_deref(),
@@ -347,9 +513,11 @@ pub async fn sync_seats(
     let Some(sub) = repositories::subscriptions::find_by_org_for_update(&txn, org_id).await? else {
         return Ok(SeatSync::NotApplicable);
     };
+    // Seul le Pro est facturé au siège (la licence Sovereign est forfaitaire).
     let (Some(item_id), true) = (
         sub.stripe_item_id.as_deref(),
-        SubscriptionStatus::parse(&sub.status).grants_pro(),
+        Product::parse(Some(&sub.product)) == Product::Pro
+            && SubscriptionStatus::parse(&sub.status).grants_pro(),
     ) else {
         return Ok(SeatSync::NotApplicable);
     };
@@ -447,11 +615,63 @@ pub fn check_price(
 
 /// Au démarrage : signale (sans bloquer) un prix Stripe incohérent avec la
 /// config, ou injoignable — pour le mensuel et, s'il est proposé, l'annuel.
+/// Licence Sovereign : prix simple, récurrent annuel, au montant configuré.
+/// Mise en service : prix simple, PONCTUEL (sinon il serait refacturé chaque année).
+pub fn check_sovereign_price(
+    price: &PriceInfo,
+    expected_cents: u32,
+    one_time: bool,
+) -> Result<(), String> {
+    if price.tiered_volume || !price.tiers.is_empty() {
+        return Err("prix simple attendu (pas de paliers)".into());
+    }
+    if one_time {
+        if !price.one_time || price.interval.is_some() {
+            return Err("la mise en service doit être un prix PONCTUEL (one-time)".into());
+        }
+    } else if price.one_time || price.interval.as_deref() != Some("year") {
+        return Err(format!(
+            "la licence doit être récurrente annuelle (périodicité Stripe : {:?})",
+            price.interval
+        ));
+    }
+    if price.unit_amount != Some(u64::from(expected_cents)) {
+        return Err(format!(
+            "montant Stripe {:?} c ≠ attendu {expected_cents} c",
+            price.unit_amount
+        ));
+    }
+    Ok(())
+}
+
 pub async fn verify_stripe_prices(
     provider: &dyn PaymentProvider,
     stripe: &StripeConfig,
     pricing: ProPricing,
+    sovereign: SovereignPricing,
 ) {
+    if let Some(prices) = &stripe.sovereign_prices {
+        for (price_id, cents, one_time) in [
+            (
+                &prices.license_price_id,
+                sovereign.license_cents_per_year,
+                false,
+            ),
+            (&prices.setup_price_id, sovereign.setup_cents, true),
+        ] {
+            match provider.price(price_id).await {
+                Ok(price) => match check_sovereign_price(&price, cents, one_time) {
+                    Ok(()) => tracing::info!(price_id, "prix Sovereign conforme"),
+                    Err(e) => tracing::error!(
+                        price_id,
+                        "PRIX STRIPE SOVEREIGN INCOHÉRENT (SOVEREIGN_*) : {e}"
+                    ),
+                },
+                Err(e) => tracing::warn!(price_id, error = %e, "prix Sovereign non vérifié"),
+            }
+        }
+    }
+
     let mut prices = vec![(BillingInterval::Month, stripe.pro_price_id.as_str())];
     if let Some(annual) = &stripe.pro_annual_price_id {
         prices.push((BillingInterval::Year, annual.as_str()));
@@ -501,11 +721,17 @@ pub async fn apply_event(db: &DatabaseConnection, event: WebhookEvent) -> Result
             org_id,
             customer_id,
             subscription_id,
+            product,
+            setup_fee_included,
         } => {
+            let product = Product::parse(product.as_deref());
             apply_subscription(
                 &txn,
                 event.created,
                 org_id,
+                product,
+                // La mise en service est payée avec la session qui l'incluait.
+                setup_fee_included,
                 SubscriptionState {
                     subscription_id,
                     customer_id,
@@ -516,6 +742,7 @@ pub async fn apply_event(db: &DatabaseConnection, event: WebhookEvent) -> Result
                     price_id: None,
                     interval: None,
                     current_period_end: None,
+                    product: Some(product.as_str().into()),
                 },
             )
             .await?
@@ -529,7 +756,14 @@ pub async fn apply_event(db: &DatabaseConnection, event: WebhookEvent) -> Result
                 }
             };
             match org_id {
-                Some(org_id) => apply_subscription(&txn, event.created, org_id, state).await?,
+                Some(org_id) => {
+                    // Produit : celui de l'événement, sinon celui déjà enregistré.
+                    let known = repositories::subscriptions::find_by_org(&txn, org_id)
+                        .await?
+                        .map(|s| s.product);
+                    let product = Product::parse(state.product.as_deref().or(known.as_deref()));
+                    apply_subscription(&txn, event.created, org_id, product, false, state).await?
+                }
                 None => Outcome::Ignored("abonnement sans organisation connue"),
             }
         }
@@ -545,6 +779,8 @@ async fn apply_subscription<C: ConnectionTrait>(
     conn: &C,
     event_at: i64,
     org_id: Uuid,
+    product: Product,
+    setup_fee_paid: bool,
     state: SubscriptionState,
 ) -> Result<Outcome, DbErr> {
     // Verrou sur l'org : deux webhooks simultanés pour elle s'appliquent l'un après l'autre.
@@ -559,8 +795,19 @@ async fn apply_subscription<C: ConnectionTrait>(
         return Ok(Outcome::Ignored("organisation inconnue"));
     };
     let plan: String = row.try_get("", "plan")?;
-    if plan == Plan::Sovereign.as_str() {
-        return Ok(Outcome::Ignored("plan Sovereign géré hors Stripe"));
+    let is_sovereign_org = plan == Plan::Sovereign.as_str();
+    match product {
+        Product::Pro if is_sovereign_org => {
+            return Ok(Outcome::Ignored(
+                "abonnement Pro pour une organisation Sovereign",
+            ));
+        }
+        Product::Sovereign if !is_sovereign_org => {
+            return Ok(Outcome::Ignored(
+                "abonnement Sovereign pour une organisation non Sovereign",
+            ));
+        }
+        _ => {}
     }
 
     let current: Option<Subscription> =
@@ -593,10 +840,22 @@ async fn apply_subscription<C: ConnectionTrait>(
             item_id: state.item_id.as_deref(),
             interval,
             current_period_end: state.current_period_end,
+            product: product.as_str(),
             event_at,
         },
     )
     .await?;
+
+    if product == Product::Sovereign {
+        // Le plan reste Sovereign (contrat) ; seule la mise en service est notée.
+        if setup_fee_paid {
+            repositories::organizations::mark_sovereign_setup_paid(conn, org_id).await?;
+        }
+        return Ok(Outcome::Applied {
+            org_id,
+            plan: Plan::Sovereign,
+        });
+    }
 
     let new_plan = if state.status.grants_pro() {
         Plan::Pro
@@ -618,9 +877,30 @@ mod tests {
         PriceInfo {
             currency: "eur".into(),
             interval: Some(interval.into()),
+            one_time: false,
+            unit_amount: None,
             tiered_volume: true,
             tiers,
         }
+    }
+
+    #[test]
+    fn prix_sovereign() {
+        let license = lodestone_billing::MockPaymentProvider::simple_price(Some("year"), 1_800_000);
+        let setup = lodestone_billing::MockPaymentProvider::simple_price(None, 600_000);
+        assert_eq!(check_sovereign_price(&license, 1_800_000, false), Ok(()));
+        assert_eq!(check_sovereign_price(&setup, 600_000, true), Ok(()));
+
+        // Mise en service créée en récurrent : elle serait refacturée chaque année.
+        let recurring_setup =
+            lodestone_billing::MockPaymentProvider::simple_price(Some("year"), 600_000);
+        assert!(check_sovereign_price(&recurring_setup, 600_000, true).is_err());
+        // Licence mensuelle, montant faux, licence ponctuelle.
+        let monthly =
+            lodestone_billing::MockPaymentProvider::simple_price(Some("month"), 1_800_000);
+        assert!(check_sovereign_price(&monthly, 1_800_000, false).is_err());
+        assert!(check_sovereign_price(&license, 1_700_000, false).is_err());
+        assert!(check_sovereign_price(&setup, 1_800_000, false).is_err());
     }
 
     #[test]

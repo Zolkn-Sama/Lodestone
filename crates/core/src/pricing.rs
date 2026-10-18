@@ -122,6 +122,37 @@ impl ProPricing {
     }
 }
 
+/// Tarif Sovereign (BILL-07) : licence annuelle récurrente + frais de mise en
+/// service facturés une seule fois. Pas de socle ni de prix par siège.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SovereignPricing {
+    /// Licence annuelle (18 000 € = 1 800 000).
+    pub license_cents_per_year: u32,
+    /// Mise en service, une fois (6 000 € = 600 000).
+    pub setup_cents: u32,
+}
+
+impl Default for SovereignPricing {
+    fn default() -> Self {
+        Self {
+            license_cents_per_year: 1_800_000,
+            setup_cents: 600_000,
+        }
+    }
+}
+
+impl SovereignPricing {
+    /// Première facture : licence + mise en service si elle n'a jamais été payée.
+    pub fn first_invoice_cents(&self, setup_already_paid: bool) -> u64 {
+        u64::from(self.license_cents_per_year)
+            + if setup_already_paid {
+                0
+            } else {
+                u64::from(self.setup_cents)
+            }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +263,20 @@ mod tests {
             assert_eq!(BillingInterval::parse(i.as_str()), Some(i));
         }
         assert_eq!(BillingInterval::parse("week"), None);
+    }
+
+    #[test]
+    fn sovereign_mise_en_service_une_seule_fois() {
+        let p = SovereignPricing::default();
+        assert_eq!(
+            p.first_invoice_cents(false),
+            2_400_000,
+            "18 000 € + 6 000 €"
+        );
+        assert_eq!(
+            p.first_invoice_cents(true),
+            1_800_000,
+            "déjà payée : licence seule"
+        );
     }
 }

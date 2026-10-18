@@ -60,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
             provider.as_ref(),
             stripe,
             config.pro_pricing,
+            config.sovereign_pricing,
         )
         .await;
     }

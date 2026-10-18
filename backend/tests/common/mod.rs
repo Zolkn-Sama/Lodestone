@@ -20,7 +20,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use lodestone_backend::{
-    config::{Config, StripeConfig},
+    config::{Config, SovereignPrices, StripeConfig},
     events::Events,
     router::app_router,
     services::ingestion::EMBEDDING_DIMENSIONS,
@@ -34,6 +34,9 @@ pub const WEBHOOK_SECRET: &str = "whsec_test";
 /// Prix Stripe Pro (mensuel, annuel) configurés dans les tests.
 pub const MONTHLY_PRICE: &str = "price_pro_test";
 pub const ANNUAL_PRICE: &str = "price_pro_annual_test";
+/// Prix Sovereign : licence annuelle et mise en service ponctuelle.
+pub const SOVEREIGN_LICENSE_PRICE: &str = "price_sovereign_license_test";
+pub const SOVEREIGN_SETUP_PRICE: &str = "price_sovereign_setup_test";
 
 /// Configuration de la facturation d'un serveur de test.
 enum Billing {
@@ -129,6 +132,10 @@ impl TestApp {
                 webhook_secret: WEBHOOK_SECRET.into(),
                 pro_price_id: MONTHLY_PRICE.into(),
                 pro_annual_price_id: annual_offered.then(|| ANNUAL_PRICE.into()),
+                sovereign_prices: Some(SovereignPrices {
+                    license_price_id: SOVEREIGN_LICENSE_PRICE.into(),
+                    setup_price_id: SOVEREIGN_SETUP_PRICE.into(),
+                }),
             });
         }
         let state = AppState {

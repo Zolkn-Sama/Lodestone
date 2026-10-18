@@ -3,14 +3,23 @@ use uuid::Uuid;
 
 use crate::error::BillingError;
 
-/// Demande de session de paiement pour passer une org en Pro.
+/// Une ligne de la session de paiement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckoutItem {
+    /// Prix (`price_…`) : récurrent (abonnement) ou ponctuel (facturé une seule
+    /// fois, sur la première facture).
+    pub price_id: String,
+    pub quantity: u32,
+}
+
+/// Demande de session de paiement (abonnement) pour une org.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutRequest {
     pub org_id: Uuid,
-    /// Prix choisi (`price_…`) : mensuel ou annuel.
-    pub price_id: String,
-    /// Sièges facturés (quantité de l'abonnement).
-    pub seats: u32,
+    pub items: Vec<CheckoutItem>,
+    /// Métadonnées posées sur la session ET l'abonnement (`org_id` est ajouté
+    /// d'office) : les webhooks les relisent.
+    pub metadata: Vec<(String, String)>,
     /// Email pré-rempli sur la page de paiement.
     pub customer_email: String,
     pub success_url: String,
@@ -33,12 +42,16 @@ pub struct PriceTier {
     pub unit_amount: Option<u64>,
 }
 
-/// Description du prix Pro tel que configuré chez le fournisseur.
+/// Description d'un prix tel que configuré chez le fournisseur.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PriceInfo {
     pub currency: String,
-    /// `month`, `year`…
+    /// `month`, `year`… ; `None` pour un prix ponctuel.
     pub interval: Option<String>,
+    /// Prix ponctuel (facturé une fois), par opposition à récurrent.
+    pub one_time: bool,
+    /// Montant unitaire d'un prix simple (hors paliers).
+    pub unit_amount: Option<u64>,
     /// Prix par paliers en mode « volume » (tout le volume au tarif du palier atteint).
     pub tiered_volume: bool,
     pub tiers: Vec<PriceTier>,

@@ -58,3 +58,36 @@ pub async fn set_plan<C: ConnectionTrait>(conn: &C, id: Uuid, plan: Plan) -> Res
     .await?;
     Ok(())
 }
+
+/// Date de paiement de la mise en service Sovereign, si payée.
+pub async fn sovereign_setup_paid_at<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+) -> Result<Option<sea_orm::prelude::DateTimeWithTimeZone>, DbErr> {
+    let row = conn
+        .query_one(sea_orm::Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT sovereign_setup_paid_at FROM organizations WHERE id = $1",
+            [id.into()],
+        ))
+        .await?;
+    match row {
+        Some(row) => row.try_get("", "sovereign_setup_paid_at"),
+        None => Ok(None),
+    }
+}
+
+/// Enregistre le paiement de la mise en service (la première fois seulement).
+pub async fn mark_sovereign_setup_paid<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE organizations SET sovereign_setup_paid_at = now()
+         WHERE id = $1 AND sovereign_setup_paid_at IS NULL",
+        [id.into()],
+    ))
+    .await?;
+    Ok(())
+}

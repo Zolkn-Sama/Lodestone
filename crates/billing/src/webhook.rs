@@ -138,6 +138,8 @@ pub struct SubscriptionState {
     pub interval: Option<String>,
     /// Fin de la période en cours (horodatage Unix).
     pub current_period_end: Option<i64>,
+    /// Produit (`pro` / `sovereign`) lu dans les métadonnées de l'abonnement.
+    pub product: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +149,10 @@ pub enum BillingEvent {
         org_id: Uuid,
         customer_id: Option<String>,
         subscription_id: String,
+        /// Produit souscrit (`pro` / `sovereign`), lu dans les métadonnées.
+        product: Option<String>,
+        /// La session incluait les frais de mise en service (payés avec elle).
+        setup_fee_included: bool,
     },
     /// Création, mise à jour (statut, sièges) ou résiliation d'un abonnement.
     Subscription(SubscriptionState),
@@ -192,6 +198,9 @@ pub fn parse_event(payload: &[u8]) -> Result<WebhookEvent, WebhookError> {
                     org_id,
                     customer_id: field(object, "customer"),
                     subscription_id,
+                    product: field(&object["metadata"], "product"),
+                    setup_fee_included: object["metadata"]["setup_fee"].as_str()
+                        == Some("included"),
                 },
                 _ => BillingEvent::Ignored,
             }
@@ -227,6 +236,7 @@ pub fn parse_event(payload: &[u8]) -> Result<WebhookEvent, WebhookError> {
                 current_period_end: item["current_period_end"]
                     .as_i64()
                     .or_else(|| object["current_period_end"].as_i64()),
+                product: field(&object["metadata"], "product"),
             })
         }
         _ => BillingEvent::Ignored,
@@ -335,9 +345,29 @@ mod tests {
             BillingEvent::CheckoutCompleted {
                 org_id: org,
                 customer_id: Some("cus_1".into()),
-                subscription_id: "sub_1".into()
+                subscription_id: "sub_1".into(),
+                product: None,
+                setup_fee_included: false,
             }
         );
+
+        // Session Sovereign avec frais de mise en service.
+        let parsed = parse_event(&event(
+            "checkout.session.completed",
+            json!({ "id": "cs_3", "subscription": "sub_3",
+                    "metadata": { "org_id": org, "product": "sovereign", "setup_fee": "included" } }),
+        ))
+        .expect("événement");
+        let BillingEvent::CheckoutCompleted {
+            product,
+            setup_fee_included,
+            ..
+        } = parsed.event
+        else {
+            panic!("checkout attendu");
+        };
+        assert_eq!(product.as_deref(), Some("sovereign"));
+        assert!(setup_fee_included);
 
         // Sans org (session créée ailleurs) : ignoré, pas une erreur.
         let parsed = parse_event(&event(

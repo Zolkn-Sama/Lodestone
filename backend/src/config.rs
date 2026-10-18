@@ -1,5 +1,5 @@
 use axum::http::HeaderValue;
-use lodestone_core::pricing::ProPricing;
+use lodestone_core::pricing::{ProPricing, SovereignPricing};
 
 /// Origine autorisée par défaut : le front Next.js en développement.
 pub const DEFAULT_CORS_ORIGIN: &str = "http://localhost:3000";
@@ -23,6 +23,8 @@ pub struct Config {
     pub stripe: Option<StripeConfig>,
     /// Tarif Pro (prix par siège, socle) : source de vérité côté plateforme.
     pub pro_pricing: ProPricing,
+    /// Tarif Sovereign (licence annuelle, mise en service).
+    pub sovereign_pricing: SovereignPricing,
 }
 
 /// Les trois valeurs vont ensemble : toutes ou aucune.
@@ -33,6 +35,14 @@ pub struct StripeConfig {
     pub pro_price_id: String,
     /// Prix annuel (avec remise) ; `None` : seul le mensuel est proposé.
     pub pro_annual_price_id: Option<String>,
+    /// Licence Sovereign (récurrente annuelle) et mise en service (ponctuelle) :
+    /// les deux ou aucun. `None` : activation Sovereign hors Stripe.
+    pub sovereign_prices: Option<SovereignPrices>,
+}
+
+pub struct SovereignPrices {
+    pub license_price_id: String,
+    pub setup_price_id: String,
 }
 
 impl Config {
@@ -50,6 +60,7 @@ impl Config {
             app_base_url: DEFAULT_CORS_ORIGIN.to_string(),
             stripe: None,
             pro_pricing: ProPricing::default(),
+            sovereign_pricing: SovereignPricing::default(),
         }
     }
 
@@ -81,6 +92,7 @@ impl Config {
                 .to_string(),
             stripe: stripe_from(|k| std::env::var(k).ok())?,
             pro_pricing: pricing_from(|k| std::env::var(k).ok())?,
+            sovereign_pricing: sovereign_pricing_from(|k| std::env::var(k).ok())?,
         })
     }
 }
@@ -99,6 +111,7 @@ impl std::fmt::Debug for Config {
             .field("app_base_url", &self.app_base_url)
             .field("stripe", &self.stripe.as_ref().map(|_| "configuré (***)"))
             .field("pro_pricing", &self.pro_pricing)
+            .field("sovereign_pricing", &self.sovereign_pricing)
             .finish()
     }
 }
@@ -118,10 +131,29 @@ fn stripe_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<St
             webhook_secret,
             pro_price_id,
             pro_annual_price_id: get("STRIPE_PRICE_PRO_ANNUAL"),
+            sovereign_prices: match (
+                get("STRIPE_PRICE_SOVEREIGN_LICENSE"),
+                get("STRIPE_PRICE_SOVEREIGN_SETUP"),
+            ) {
+                (Some(license_price_id), Some(setup_price_id)) => Some(SovereignPrices {
+                    license_price_id,
+                    setup_price_id,
+                }),
+                (None, None) => None,
+                _ => anyhow::bail!(
+                    "STRIPE_PRICE_SOVEREIGN_LICENSE et STRIPE_PRICE_SOVEREIGN_SETUP vont ensemble"
+                ),
+            },
         })),
         (None, None, None) => {
-            if get("STRIPE_PRICE_PRO_ANNUAL").is_some() {
-                anyhow::bail!("STRIPE_PRICE_PRO_ANNUAL sans le reste de la configuration Stripe");
+            for key in [
+                "STRIPE_PRICE_PRO_ANNUAL",
+                "STRIPE_PRICE_SOVEREIGN_LICENSE",
+                "STRIPE_PRICE_SOVEREIGN_SETUP",
+            ] {
+                if get(key).is_some() {
+                    anyhow::bail!("{key} sans le reste de la configuration Stripe");
+                }
             }
             Ok(None)
         }
@@ -132,6 +164,31 @@ fn stripe_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<St
 }
 
 /// PRO_SEAT_PRICE_CENTS / PRO_FLOOR_CENTS (centimes HT), défauts 2900 / 14900.
+/// SOVEREIGN_LICENSE_CENTS / SOVEREIGN_SETUP_CENTS (centimes HT), défauts
+/// 1 800 000 (licence annuelle) / 600 000 (mise en service).
+fn sovereign_pricing_from(
+    var: impl Fn(&str) -> Option<String>,
+) -> anyhow::Result<SovereignPricing> {
+    let default = SovereignPricing::default();
+    let read = |key: &str, default: u32| -> anyhow::Result<u32> {
+        match var(key).filter(|v| !v.trim().is_empty()) {
+            None => Ok(default),
+            Some(v) => v
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("{key} : entier positif attendu (centimes), reçu « {v} »")
+                }),
+        }
+    };
+    Ok(SovereignPricing {
+        license_cents_per_year: read("SOVEREIGN_LICENSE_CENTS", default.license_cents_per_year)?,
+        setup_cents: read("SOVEREIGN_SETUP_CENTS", default.setup_cents)?,
+    })
+}
+
 fn pricing_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<ProPricing> {
     let default = ProPricing::default();
     let read = |key: &str, default: u32| -> anyhow::Result<u32> {
@@ -234,6 +291,55 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn tarif_sovereign_configurable() {
+        assert_eq!(
+            sovereign_pricing_from(vars(&[])).expect("défauts"),
+            SovereignPricing::default()
+        );
+        let p = sovereign_pricing_from(vars(&[("SOVEREIGN_SETUP_CENTS", "500000")])).expect("ok");
+        assert_eq!(p.setup_cents, 500_000);
+        assert!(sovereign_pricing_from(vars(&[("SOVEREIGN_LICENSE_CENTS", "0")])).is_err());
+    }
+
+    #[test]
+    fn prix_sovereign_ensemble() {
+        let base = [
+            ("STRIPE_SECRET_KEY", "sk"),
+            ("STRIPE_WEBHOOK_SECRET", "whsec"),
+            ("STRIPE_PRICE_PRO", "price_pro"),
+        ];
+        let stripe = stripe_from(vars(&base)).expect("ok").expect("configuré");
+        assert!(stripe.sovereign_prices.is_none(), "facultatif");
+
+        let mut both = base.to_vec();
+        both.push(("STRIPE_PRICE_SOVEREIGN_LICENSE", "price_lic"));
+        both.push(("STRIPE_PRICE_SOVEREIGN_SETUP", "price_setup"));
+        let prices = stripe_from(vars(&both))
+            .expect("ok")
+            .expect("configuré")
+            .sovereign_prices
+            .expect("Sovereign");
+        assert_eq!(
+            (
+                prices.license_price_id.as_str(),
+                prices.setup_price_id.as_str()
+            ),
+            ("price_lic", "price_setup")
+        );
+
+        let mut license_only = base.to_vec();
+        license_only.push(("STRIPE_PRICE_SOVEREIGN_LICENSE", "price_lic"));
+        assert!(
+            stripe_from(vars(&license_only)).is_err(),
+            "licence sans mise en service"
+        );
+        assert!(
+            stripe_from(vars(&[("STRIPE_PRICE_SOVEREIGN_SETUP", "x")])).is_err(),
+            "sans le reste de Stripe"
+        );
     }
 
     #[test]

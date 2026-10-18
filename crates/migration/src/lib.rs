@@ -10,6 +10,7 @@ mod m20261018_100000_add_plans_and_usage;
 mod m20261018_120000_create_subscriptions;
 mod m20261018_140000_add_subscription_item;
 mod m20261018_160000_add_billing_interval;
+mod m20261018_180000_add_sovereign_billing;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_120000_create_subscriptions::Migration),
             Box::new(m20261018_140000_add_subscription_item::Migration),
             Box::new(m20261018_160000_add_billing_interval::Migration),
+            Box::new(m20261018_180000_add_sovereign_billing::Migration),
         ]
     }
 }
