@@ -12,3 +12,5 @@ thiserror    = { workspace = true }   # AuthError
 chrono       = { workspace = true }   # calcul des dates d'expiration (exp / iat)
 uuid         = { workspace = true }   # l'id user dans le token
 sha2 = { workspace = true }
+[lints]
+workspace = true
