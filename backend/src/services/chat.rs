@@ -16,6 +16,7 @@ use crate::{
         chunks::RetrievedChunk,
         messages::{MessageRole, NewMessage},
     },
+    services::conversations as conversations_service,
     ws::protocol::{Citation, ServerMsg},
 };
 use lodestone_entity::conversations;
@@ -253,9 +254,17 @@ async fn finish(db: &DatabaseConnection, exchange: Exchange) -> ServerMsg {
     }
 }
 
-/// Question + réponse + sources, tout ou rien.
+/// Titre éventuel + question + réponse + sources, tout ou rien.
 async fn save_exchange(db: &DatabaseConnection, exchange: Exchange) -> Result<(), DbErr> {
     let txn = db.begin().await?;
+    // Première question d'une conversation sans titre choisi : elle devient le titre.
+    repositories::conversations::rename_if_title_is(
+        &txn,
+        exchange.conversation_id,
+        conversations_service::DEFAULT_TITLE,
+        conversations_service::title_from_question(&exchange.question),
+    )
+    .await?;
     repositories::messages::create(
         &txn,
         NewMessage {
