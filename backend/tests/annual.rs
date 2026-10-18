@@ -117,7 +117,7 @@ async fn souscription_mensuelle_ou_annuelle() {
         let (status, response) = checkout(&app, org, &owner, body.clone()).await;
         assert_eq!(status, StatusCode::OK, "{body:?} : {response}");
         let last = app.billing.checkout_requests().pop().expect("demande");
-        assert_eq!(last.price_id, expected_price, "{body:?}");
+        assert_eq!(last.items[0].price_id, expected_price, "{body:?}");
     }
 
     let (status, _) = checkout(&app, org, &owner, Some(json!({ "interval": "week" }))).await;
