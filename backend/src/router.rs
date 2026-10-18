@@ -47,7 +47,11 @@ pub fn app_router(state: AppState) -> Router {
         )
         .route(
             "/api/orgs/{id}/conversations",
-            post(handlers::conversations::create),
+            post(handlers::conversations::create).get(handlers::conversations::list),
+        )
+        .route(
+            "/api/conversations/{id}",
+            get(handlers::conversations::get).delete(handlers::conversations::delete),
         )
         .route(
             "/api/documents/{id}",
