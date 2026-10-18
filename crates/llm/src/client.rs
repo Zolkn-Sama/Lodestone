@@ -50,6 +50,10 @@ pub trait LlmClient: Send + Sync {
     /// Taille des vecteurs produits par `embed` (768 pour `nomic-embed-text`).
     fn embedding_dimensions(&self) -> usize;
 
+    /// Nom du modèle d'embedding : enregistré avec chaque document, car des
+    /// vecteurs de modèles différents ne sont pas comparables entre eux.
+    fn embedding_model(&self) -> &str;
+
     /// Préfixe ajouté aux fragments de documents avant l'embedding. Certains
     /// modèles en ont besoin pour distinguer document et question
     /// (`search_document: ` pour nomic-embed-text).

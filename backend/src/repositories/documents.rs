@@ -91,3 +91,39 @@ pub async fn fail_interrupted<C: ConnectionTrait>(conn: &C) -> Result<u64, DbErr
         .await?;
     Ok(res.rows_affected)
 }
+
+/// Note le modèle d'embedding qui a produit les fragments du document.
+pub async fn set_embedding_model<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+    model: &str,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE documents SET embedding_model = $1 WHERE id = $2",
+        [model.into(), id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Documents prêts dont le modèle d'embedding diffère de `model`, par modèle
+/// (`(inconnu)` pour ceux ingérés avant le suivi).
+pub async fn count_ready_by_other_embedding_model<C: ConnectionTrait>(
+    conn: &C,
+    model: &str,
+) -> Result<Vec<(String, i64)>, DbErr> {
+    let rows = conn
+        .query_all(sea_orm::Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT COALESCE(embedding_model, '(inconnu)') AS model, count(*) AS n
+             FROM documents
+             WHERE status = 'ready' AND embedding_model IS DISTINCT FROM $1
+             GROUP BY 1 ORDER BY 1",
+            [model.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|r| Ok((r.try_get("", "model")?, r.try_get("", "n")?)))
+        .collect()
+}

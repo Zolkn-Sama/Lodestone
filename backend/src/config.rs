@@ -1,5 +1,8 @@
 use axum::http::HeaderValue;
-use lodestone_core::pricing::{ProPricing, SovereignPricing};
+use lodestone_core::{
+    plan::Plan,
+    pricing::{ProPricing, SovereignPricing},
+};
 
 /// Origine autorisée par défaut : le front Next.js en développement.
 pub const DEFAULT_CORS_ORIGIN: &str = "http://localhost:3000";
@@ -17,6 +20,11 @@ pub struct Config {
     pub chat_model: String,
     pub(crate) jwt_secret: String,
     pub app_port: u16,
+    /// Plan des orgs créées : Free (SaaS) ou Sovereign (auto-hébergé, sans limite).
+    pub new_org_plan: Plan,
+    /// Appliquer les migrations au démarrage (défaut : oui). À désactiver si
+    /// elles sont lancées à part (ex. plusieurs instances).
+    pub run_migrations: bool,
     /// URL du front : pages de retour après paiement.
     pub app_base_url: String,
     /// `None` : facturation désactivée (les routes de paiement répondent 503).
@@ -57,6 +65,8 @@ impl Config {
             chat_model: "llama3.1".to_string(),
             jwt_secret,
             app_port: 0,
+            run_migrations: true,
+            new_org_plan: Plan::Free,
             app_base_url: DEFAULT_CORS_ORIGIN.to_string(),
             stripe: None,
             pro_pricing: ProPricing::default(),
@@ -75,8 +85,7 @@ impl Config {
                 &std::env::var("CORS_ALLOWED_ORIGINS")
                     .unwrap_or_else(|_| DEFAULT_CORS_ORIGIN.to_string()),
             )?,
-            llm_base_url: std::env::var("OLLAMA_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:11434/v1".to_string()),
+            llm_base_url: llm_base_url_from(|k| std::env::var(k).ok()),
             llm_api_key: std::env::var("LLM_API_KEY").ok().filter(|k| !k.is_empty()),
             embedding_model: std::env::var("EMBEDDING_MODEL")
                 .unwrap_or_else(|_| "nomic-embed-text".to_string()),
@@ -86,6 +95,14 @@ impl Config {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8090),
+            new_org_plan: new_org_plan_from(|k| std::env::var(k).ok())?,
+            run_migrations: !matches!(
+                std::env::var("RUN_MIGRATIONS")
+                    .ok()
+                    .as_deref()
+                    .map(str::trim),
+                Some("false" | "0" | "no")
+            ),
             app_base_url: std::env::var("APP_BASE_URL")
                 .unwrap_or_else(|_| DEFAULT_CORS_ORIGIN.to_string())
                 .trim_end_matches('/')
@@ -109,11 +126,38 @@ impl std::fmt::Debug for Config {
             .field("jwt_secret", &"***")
             .field("app_port", &self.app_port)
             .field("app_base_url", &self.app_base_url)
+            .field("new_org_plan", &self.new_org_plan)
+            .field("run_migrations", &self.run_migrations)
             .field("stripe", &self.stripe.as_ref().map(|_| "configuré (***)"))
             .field("pro_pricing", &self.pro_pricing)
             .field("sovereign_pricing", &self.sovereign_pricing)
             .finish()
     }
+}
+
+/// NEW_ORG_PLAN : `free` (défaut, SaaS) ou `sovereign` (installation
+/// auto-hébergée : pas de quotas, pas de Stripe). `pro` est refusé : il
+/// suppose un abonnement payé.
+fn new_org_plan_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Plan> {
+    match var("NEW_ORG_PLAN")
+        .map(|v| v.trim().to_lowercase())
+        .as_deref()
+    {
+        None | Some("") | Some("free") => Ok(Plan::Free),
+        Some("sovereign") => Ok(Plan::Sovereign),
+        Some(other) => {
+            anyhow::bail!("NEW_ORG_PLAN : « free » ou « sovereign » attendu, reçu « {other} »")
+        }
+    }
+}
+
+/// URL de l'API LLM compatible OpenAI. `LLM_BASE_URL` (nom neutre : Ollama ou
+/// OpenAI) prime ; `OLLAMA_BASE_URL` reste accepté (anciennes configurations).
+fn llm_base_url_from(var: impl Fn(&str) -> Option<String>) -> String {
+    let get = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    get("LLM_BASE_URL")
+        .or_else(|| get("OLLAMA_BASE_URL"))
+        .unwrap_or_else(|| "http://localhost:11434/v1".to_string())
 }
 
 /// STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PRO : toutes ou
@@ -291,6 +335,39 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn plan_des_nouvelles_orgs() {
+        assert_eq!(new_org_plan_from(vars(&[])).expect("défaut"), Plan::Free);
+        assert_eq!(
+            new_org_plan_from(vars(&[("NEW_ORG_PLAN", " Sovereign ")])).expect("ok"),
+            Plan::Sovereign
+        );
+        for bad in ["pro", "enterprise"] {
+            assert!(
+                new_org_plan_from(vars(&[("NEW_ORG_PLAN", bad)])).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn url_du_llm() {
+        assert_eq!(llm_base_url_from(vars(&[])), "http://localhost:11434/v1");
+        assert_eq!(
+            llm_base_url_from(vars(&[("OLLAMA_BASE_URL", "http://gpu-box:11434/v1")])),
+            "http://gpu-box:11434/v1",
+            "ancien nom accepté"
+        );
+        assert_eq!(
+            llm_base_url_from(vars(&[
+                ("OLLAMA_BASE_URL", "http://ollama:11434/v1"),
+                ("LLM_BASE_URL", "https://api.openai.com/v1"),
+            ])),
+            "https://api.openai.com/v1",
+            "LLM_BASE_URL prime"
+        );
     }
 
     #[test]
