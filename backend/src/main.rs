@@ -8,6 +8,7 @@ use lodestone_backend::services::ingestion::EMBEDDING_DIMENSIONS;
 use lodestone_backend::state::AppState;
 use lodestone_billing::{PaymentProvider, StripeClient};
 use lodestone_llm::OpenAiCompatibleClient;
+use lodestone_migration::{Migrator, MigratorTrait};
 use tokio::net::TcpListener;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -34,8 +35,21 @@ async fn main() -> anyhow::Result<()> {
         .sqlx_logging(false);
     let db = Database::connect(opt).await?;
 
+    // Schéma à jour avant toute requête (image Docker : pas d'étape séparée).
+    if config.run_migrations {
+        Migrator::up(&db, None).await?;
+        info!("migrations appliquées");
+    }
+
     // Ingestions interrompues par l'arrêt précédent : documents -> failed.
     lodestone_backend::services::ingestion::recover_interrupted(&db).await?;
+
+    // Documents indexés avec un autre modèle (ex. bascule Ollama -> OpenAI) : à ré-uploader.
+    lodestone_backend::services::ingestion::warn_on_embedding_model_change(
+        &db,
+        &config.embedding_model,
+    )
+    .await;
 
     // 4. Client LLM (embeddings + génération) : Ollama par défaut, OpenAI si LLM_API_KEY est fourni.
     let llm = OpenAiCompatibleClient::new(

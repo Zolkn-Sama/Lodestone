@@ -9,10 +9,12 @@ use lodestone_entity::organizations;
 pub async fn create<C: ConnectionTrait>(
     conn: &C,
     name: String,
+    plan: Plan,
 ) -> Result<organizations::Model, DbErr> {
     organizations::ActiveModel {
         id: Set(Uuid::new_v4()),
         name: Set(name),
+        plan: Set(plan.as_str().to_string()),
         ..Default::default()
     }
     .insert(conn)

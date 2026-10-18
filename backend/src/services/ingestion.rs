@@ -138,6 +138,7 @@ async fn run(
     let txn = db.begin().await?;
     repositories::chunks::delete_for_document(&txn, document.id).await?;
     repositories::chunks::insert_many(&txn, document.id, document.org_id, rows).await?;
+    repositories::documents::set_embedding_model(&txn, document.id, llm.embedding_model()).await?;
     txn.commit().await?;
 
     Ok(count)
@@ -168,4 +169,35 @@ pub async fn recover_interrupted(db: &DatabaseConnection) -> Result<u64, DbErr> 
         );
     }
     Ok(count)
+}
+
+/// Documents prêts indexés avec un AUTRE modèle d'embedding que `model`
+/// (ou avant le suivi du modèle) : (modèle, nombre). Leurs vecteurs ne sont
+/// pas comparables à ceux des nouvelles questions : la recherche y serait
+/// faussée sans erreur visible. Il faut les ré-uploader.
+pub async fn documents_from_other_models(
+    db: &DatabaseConnection,
+    model: &str,
+) -> Result<Vec<(String, i64)>, DbErr> {
+    repositories::documents::count_ready_by_other_embedding_model(db, model).await
+}
+
+/// Au démarrage : signale les documents à ré-uploader après un changement de
+/// modèle d'embedding (ex. bascule Ollama -> OpenAI).
+pub async fn warn_on_embedding_model_change(db: &DatabaseConnection, model: &str) {
+    match documents_from_other_models(db, model).await {
+        Ok(others) if !others.is_empty() => {
+            for (other, count) in others {
+                tracing::error!(
+                    current_model = model,
+                    other_model = %other,
+                    count,
+                    "DOCUMENTS À RÉ-UPLOADER : indexés avec un autre modèle d'embedding, \
+                     la recherche les compare mal aux nouvelles questions"
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "modèles d'embedding des documents non vérifiés"),
+    }
 }

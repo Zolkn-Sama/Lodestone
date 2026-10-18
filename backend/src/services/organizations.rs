@@ -7,21 +7,29 @@ use crate::{
     repositories,
     services::quotas,
 };
-use lodestone_core::role::{self, Role};
+use lodestone_core::{
+    plan::Plan,
+    role::{self, Role},
+};
 use lodestone_entity::organizations;
 
 /// Crée une org ET rend son créateur `owner`, de façon atomique.
+/// Crée une org au plan `plan` (config `NEW_ORG_PLAN` : Free en SaaS, Sovereign
+/// pour une installation auto-hébergée) ET rend son créateur `owner`.
 pub async fn create_org(
     db: &DatabaseConnection,
     creator_id: Uuid,
     name: String,
+    plan: Plan,
 ) -> Result<organizations::Model, AppError> {
     // On ouvre une transaction : tout ce qui suit réussit ensemble ou est annulé.
     let txn = db.begin().await?;
 
-    // Toute nouvelle org est en Free : une seule par utilisateur.
-    quotas::ensure_can_create_org(&txn, creator_id).await?;
-    let org = repositories::organizations::create(&txn, name).await?;
+    // En Free : une seule org par utilisateur.
+    if plan == Plan::Free {
+        quotas::ensure_can_create_org(&txn, creator_id).await?;
+    }
+    let org = repositories::organizations::create(&txn, name, plan).await?;
     repositories::memberships::create(&txn, creator_id, org.id, role::Role::Owner).await?;
 
     // Rien n'est réellement écrit tant qu'on n'a pas commité.
