@@ -41,6 +41,8 @@ pub const SOVEREIGN_SETUP_PRICE: &str = "price_sovereign_setup_test";
 /// Configuration de la facturation d'un serveur de test.
 enum Billing {
     Disabled,
+    /// Installation auto-hébergée : pas de Stripe, orgs créées en Sovereign.
+    SelfHosted,
     /// Stripe configuré, sans prix annuel.
     MonthlyOnly,
     Enabled(MockPaymentProvider),
@@ -83,6 +85,15 @@ impl TestApp {
         Self::spawn_full(MockLlmClient::new(EMBEDDING_DIMENSIONS), Billing::Disabled).await
     }
 
+    /// Installation Sovereign auto-hébergée (NEW_ORG_PLAN=sovereign, sans Stripe).
+    pub async fn spawn_self_hosted() -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::SelfHosted,
+        )
+        .await
+    }
+
     /// Stripe configuré sans prix annuel : seul le mensuel est proposé.
     pub async fn spawn_without_annual() -> Self {
         Self::spawn_full(
@@ -120,8 +131,11 @@ impl TestApp {
         let mut config = Config::new(url, "secret-de-test".into());
         config.app_base_url = "https://app.test".into();
         let annual_offered = !matches!(billing_mode, Billing::MonthlyOnly);
+        if matches!(billing_mode, Billing::SelfHosted) {
+            config.new_org_plan = lodestone_core::plan::Plan::Sovereign;
+        }
         let (billing, billing_enabled) = match billing_mode {
-            Billing::Disabled => (MockPaymentProvider::new(), false),
+            Billing::Disabled | Billing::SelfHosted => (MockPaymentProvider::new(), false),
             Billing::MonthlyOnly => (MockPaymentProvider::new(), true),
             Billing::Enabled(provider) => (provider, true),
         };
