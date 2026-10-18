@@ -74,11 +74,14 @@ async fn estimation_en_free_avec_le_socle() {
     let body = billing(&app, org, &owner).await;
     assert_eq!(
         body["pro_pricing"],
-        json!({ "seat_price_cents": 2900, "floor_cents": 14900 })
+        json!({ "seat_price_cents": 2900, "floor_cents": 14900, "annual_discount_percent": 15 })
     );
     assert_eq!(
-        body["monthly_quote"],
-        json!({ "seats": 1, "seats_total_cents": 2900, "total_cents": 14900, "floor_applied": true }),
+        body["current_quote"],
+        json!({
+            "interval": "month", "seats": 1, "seats_total_cents": 2900,
+            "total_cents": 14900, "floor_applied": true
+        }),
         "1 siège : le socle s'applique"
     );
 }
@@ -88,34 +91,32 @@ async fn en_pro_le_prix_par_siege_prend_le_relais() {
     let app = TestApp::spawn().await;
     let owner = app.register("owner").await;
     let org = app.create_org(&owner).await;
+    subscribe(&app, org, 1).await;
 
-    for (seats, total, floor) in [
-        (4, 14900, true),
-        (5, 14900, true),
-        (6, 17400, false),
-        (12, 34800, false),
-    ] {
-        subscribe_with(&app, org, seats).await;
-        let quote = billing(&app, org, &owner).await["monthly_quote"].clone();
+    // Les sièges suivent les membres : on en ajoute jusqu'à passer le socle.
+    add_members(&app, org, &owner, 3).await;
+    for (seats, (total, floor)) in (4..).zip([(14900, true), (14900, true), (17400, false)]) {
+        wait_last_seats(&app, seats).await;
+        let quote = billing(&app, org, &owner).await["current_quote"].clone();
         assert_eq!(quote["seats"], seats, "{quote}");
         assert_eq!(quote["total_cents"], total, "{seats} sièges");
         assert_eq!(quote["floor_applied"], floor, "{seats} sièges");
+        let user = app.register(&format!("extra{seats}")).await;
+        app.add_member(org, &owner, &user, "member").await;
     }
 }
 
-/// Variante de `subscribe` rejouable (nouvel id et horodatage croissant).
-async fn subscribe_with(app: &TestApp, org: Uuid, seats: u32) {
-    let event = json!({
-        "id": format!("evt_{seats}"), "type": "customer.subscription.updated",
-        "created": T0 + i64::from(seats),
-        "data": { "object": {
-            "id": "sub_1", "customer": "cus_1", "status": "active",
-            "metadata": { "org_id": org },
-            "items": { "data": [ { "id": "si_1", "quantity": seats } ] }
-        } }
-    });
-    let (status, body) = app.send_webhook(&event).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
+#[tokio::test]
+async fn un_webhook_realigne_les_sieges_sur_les_membres() {
+    let app = TestApp::spawn().await;
+    let owner = app.register("owner").await;
+    let org = app.create_org(&owner).await;
+    add_members(&app, org, &owner, 1).await;
+
+    // Stripe annonce 7 sièges (ex. après une bascule programmée) pour 2 membres.
+    subscribe(&app, org, 7).await;
+    wait_last_seats(&app, 2).await;
+    assert_eq!(billing(&app, org, &owner).await["subscription"]["seats"], 2);
 }
 
 #[tokio::test]
@@ -127,7 +128,7 @@ async fn sovereign_sans_socle() {
         .await
         .expect("plan");
     assert_eq!(
-        billing(&app, org, &owner).await["monthly_quote"],
+        billing(&app, org, &owner).await["current_quote"],
         Value::Null
     );
 }
@@ -164,7 +165,7 @@ async fn arrivees_et_departs_mettent_a_jour_stripe() {
     // Les sièges enregistrés suivent : le prix affiché aussi.
     let body = billing(&app, org, &owner).await;
     assert_eq!(body["subscription"]["seats"], 2);
-    assert_eq!(body["monthly_quote"]["total_cents"], 14900);
+    assert_eq!(body["current_quote"]["total_cents"], 14900);
 }
 
 #[tokio::test]
