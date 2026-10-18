@@ -189,6 +189,11 @@ impl TestApp {
         addr
     }
 
+    /// Envoie une requête construite à la main (en-têtes libres, ex. CORS).
+    pub async fn send(&self, req: Request<Body>) -> axum::response::Response {
+        self.router.clone().oneshot(req).await.expect("réponse")
+    }
+
     pub async fn get(&self, uri: &str, token: &str) -> (StatusCode, Value) {
         self.request(Method::GET, uri, Some(token), None).await
     }

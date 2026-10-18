@@ -1,6 +1,5 @@
 use sea_orm::{ConnectOptions, Database};
 use std::{sync::Arc, time::Duration};
-//use Testcontainers::bollard::config;
 
 use lodestone_backend::config::Config;
 use lodestone_backend::events::Events;
@@ -34,6 +33,9 @@ async fn main() -> anyhow::Result<()> {
         .sqlx_logging(false);
     let db = Database::connect(opt).await?;
 
+    // Ingestions interrompues par l'arrêt précédent : documents -> failed.
+    lodestone_backend::services::ingestion::recover_interrupted(&db).await?;
+
     // 4. Client LLM (embeddings + génération) : Ollama par défaut, OpenAI si LLM_API_KEY est fourni.
     let llm = OpenAiCompatibleClient::new(
         config.llm_base_url.clone(),
@@ -55,17 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 6. Écoute et sert.
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    info!("🚀 Lodestone v1: Fondation");
-    info!("   Server starting...");
-    info!("   Loading config...");
-    info!("   Connexion to database...");
-    info!("   Connection established !");
-    info!("   Server open on http://0.0.0.0:{port}");
-    println!();
-    info!("📝 Current endpoints:");
-    info!("   GET  /        - Hello World");
-    info!("   GET  /health  - Health check");
-    println!();
+    info!(%port, "🚀 Lodestone à l'écoute sur http://0.0.0.0:{port}");
     axum::serve(listener, app).await?;
 
     Ok(())

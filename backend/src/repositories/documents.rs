@@ -73,3 +73,21 @@ pub async fn delete<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<bool, DbEr
     let res = documents::Entity::delete_by_id(id).exec(conn).await?;
     Ok(res.rows_affected > 0)
 }
+
+/// Passe en `failed` les documents restés `pending` ou `processing` : leur
+/// ingestion a été interrompue (redémarrage du serveur) et le fichier n'est
+/// pas conservé, elle ne reprendra pas. Renvoie le nombre de documents touchés.
+pub async fn fail_interrupted<C: ConnectionTrait>(conn: &C) -> Result<u64, DbErr> {
+    let res = documents::Entity::update_many()
+        .col_expr(
+            documents::Column::Status,
+            sea_orm::sea_query::Expr::value(DocumentStatus::Failed.as_str()),
+        )
+        .filter(documents::Column::Status.is_in([
+            DocumentStatus::Pending.as_str(),
+            DocumentStatus::Processing.as_str(),
+        ]))
+        .exec(conn)
+        .await?;
+    Ok(res.rows_affected)
+}

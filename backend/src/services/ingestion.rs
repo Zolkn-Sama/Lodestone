@@ -153,3 +153,19 @@ fn check_dimensions(got: usize) -> Result<(), IngestionError> {
         })
     }
 }
+
+/// À appeler au démarrage, AVANT d'accepter des requêtes : aucune ingestion ne
+/// tourne encore, donc tout document `pending`/`processing` est orphelin
+/// (serveur arrêté en cours d'ingestion). Il passe en `failed` pour que
+/// l'utilisateur sache qu'il doit le ré-uploader.
+/// Hypothèse : une seule instance du serveur (MVP).
+pub async fn recover_interrupted(db: &DatabaseConnection) -> Result<u64, DbErr> {
+    let count = repositories::documents::fail_interrupted(db).await?;
+    if count > 0 {
+        tracing::warn!(
+            count,
+            "documents interrompus par un redémarrage passés en failed"
+        );
+    }
+    Ok(count)
+}

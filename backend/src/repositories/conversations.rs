@@ -72,3 +72,20 @@ pub async fn delete<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<bool, DbEr
     let res = conversations::Entity::delete_by_id(id).exec(conn).await?;
     Ok(res.rows_affected > 0)
 }
+
+/// Remplace le titre seulement s'il vaut encore `current` (le titre par
+/// défaut) : un titre choisi par l'utilisateur n'est jamais écrasé.
+pub async fn rename_if_title_is<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+    current: &str,
+    title: String,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE conversations SET title = $1 WHERE id = $2 AND title = $3",
+        [title.into(), id.into(), current.into()],
+    ))
+    .await?;
+    Ok(())
+}
