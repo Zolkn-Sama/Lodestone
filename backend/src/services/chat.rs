@@ -1,18 +1,25 @@
-//! Chat RAG : retrouver les fragments pertinents pour une question.
-//! La génération (RAG-03) et la persistance (RAG-04) viendront s'y ajouter.
+//! Chat RAG : retrouver les fragments pertinents pour une question, puis
+//! générer la réponse en streaming. La persistance (RAG-04) viendra s'y ajouter.
 
 use std::collections::HashMap;
 
+use futures::StreamExt;
 use sea_orm::{DatabaseConnection, DbErr};
 use thiserror::Error;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
     repositories::{self, chunks::RetrievedChunk},
-    ws::protocol::Citation,
+    ws::protocol::{Citation, ServerMsg},
 };
 use lodestone_entity::conversations;
-use lodestone_llm::{LlmClient, LlmError};
+use lodestone_llm::{ChatMessage, LlmClient, LlmError};
+use lodestone_rag::{PromptSource, build_prompt, prompt::DEFAULT_MAX_CONTEXT_TOKENS};
+
+/// Réponse quand aucun document de l'org ne peut servir : on ne demande rien
+/// au modèle, qui n'aurait que son imagination pour répondre.
+pub const NO_SOURCE_REPLY: &str = "Je n'ai trouvé aucun document de votre organisation qui permette de répondre à cette question.";
 
 /// Fragments retenus par question.
 pub const TOP_K: u64 = 5;
@@ -111,6 +118,125 @@ pub fn citations(chunks: &[RetrievedChunk]) -> Vec<Citation> {
     citations
 }
 
+/// Traite une question de bout en bout et pousse les messages dans `outbox` :
+/// `sources`, puis un `token` par morceau de réponse, puis `done`.
+/// En cas d'échec, un `error` termine l'échange (sans `done`).
+/// S'arrête dès que le client n'écoute plus (`outbox` fermé).
+pub async fn answer(
+    db: &DatabaseConnection,
+    llm: &dyn LlmClient,
+    user_id: Uuid,
+    conversation_id: Uuid,
+    question: &str,
+    outbox: &mpsc::Sender<ServerMsg>,
+) {
+    // Client parti -> on arrête tout (et on lâche le flux du modèle).
+    macro_rules! send {
+        ($msg:expr) => {
+            if outbox.send($msg).await.is_err() {
+                return;
+            }
+        };
+    }
+
+    let retrieval = match retrieve(db, llm, user_id, conversation_id, question).await {
+        Ok(retrieval) => retrieval,
+        Err(e) => {
+            match &e {
+                ChatError::Llm(_) | ChatError::Database(_) => {
+                    tracing::error!(%user_id, %conversation_id, error = %e, "échec de la recherche");
+                }
+                _ => tracing::debug!(%user_id, %conversation_id, error = %e, "question refusée"),
+            }
+            send!(error(e.user_message()));
+            return;
+        }
+    };
+
+    let citations = citations(&retrieval.chunks);
+    send!(ServerMsg::Sources {
+        citations: citations.clone(),
+    });
+
+    // Identifiant du futur message de l'assistant (persisté avec RAG-04).
+    let message_id = Uuid::new_v4();
+
+    if retrieval.chunks.is_empty() {
+        send!(ServerMsg::Token {
+            delta: NO_SOURCE_REPLY.to_string(),
+        });
+        send!(ServerMsg::Done { message_id });
+        return;
+    }
+
+    let sources = prompt_sources(&citations, &retrieval.chunks);
+    let prompt = build_prompt(question, &sources, DEFAULT_MAX_CONTEXT_TOKENS);
+    let messages = [
+        ChatMessage::system(prompt.system),
+        ChatMessage::user(prompt.user),
+    ];
+
+    let mut stream = match llm.chat_stream(&messages).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            tracing::error!(%user_id, %conversation_id, error = %e, "génération impossible");
+            send!(error(
+                "la génération de la réponse est momentanément indisponible"
+            ));
+            return;
+        }
+    };
+
+    let mut produced = false;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(delta) => {
+                produced = true;
+                send!(ServerMsg::Token { delta });
+            }
+            Err(e) => {
+                tracing::error!(%user_id, %conversation_id, error = %e, "génération interrompue");
+                send!(error("la génération de la réponse a été interrompue"));
+                return;
+            }
+        }
+    }
+
+    if produced {
+        send!(ServerMsg::Done { message_id });
+    } else {
+        send!(error("le modèle n'a produit aucune réponse"));
+    }
+}
+
+/// Regroupe les extraits par document, dans l'ordre des citations : le
+/// document [1] du prompt est la première citation affichée au client.
+fn prompt_sources<'a>(
+    citations: &'a [Citation],
+    chunks: &'a [RetrievedChunk],
+) -> Vec<PromptSource<'a>> {
+    citations
+        .iter()
+        .map(|citation| {
+            let mut excerpts: Vec<&RetrievedChunk> = chunks
+                .iter()
+                .filter(|c| c.document_id == citation.document_id)
+                .collect();
+            excerpts.sort_by_key(|c| c.chunk_index);
+            PromptSource {
+                title: &citation.title,
+                excerpts: excerpts.into_iter().map(|c| c.content.as_str()).collect(),
+            }
+        })
+        .collect()
+}
+
+fn error(message: impl Into<String>) -> ServerMsg {
+    ServerMsg::Error {
+        message: message.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +271,33 @@ mod tests {
                 ("RH.pdf".into(), 0.92),
                 ("Frais.md".into(), 0.80),
                 ("IT.txt".into(), 0.40)
+            ]
+        );
+    }
+
+    #[test]
+    fn extraits_groupes_dans_l_ordre_des_citations() {
+        let mut a1 = chunk(1, "RH.pdf", 0.70);
+        a1.chunk_index = 4;
+        a1.content = "RH, fragment 4".into();
+        let mut a0 = chunk(1, "RH.pdf", 0.60);
+        a0.chunk_index = 2;
+        a0.content = "RH, fragment 2".into();
+        let mut b = chunk(2, "Frais.md", 0.90);
+        b.content = "Frais".into();
+        let chunks = [a1, b, a0];
+
+        let cites = citations(&chunks);
+        let sources = prompt_sources(&cites, &chunks);
+        let got: Vec<(&str, Vec<&str>)> = sources
+            .iter()
+            .map(|s| (s.title, s.excerpts.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Frais.md", vec!["Frais"]),
+                ("RH.pdf", vec!["RH, fragment 2", "RH, fragment 4"]),
             ]
         );
     }
