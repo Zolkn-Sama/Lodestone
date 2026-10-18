@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sea_orm::DatabaseConnection;
+use sea_orm::{DatabaseConnection, TransactionTrait};
 use uuid::Uuid;
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
     error::AppError,
     events::Events,
     repositories::documents::{self, NewDocument},
-    services::ingestion,
+    services::{ingestion, quotas},
     ws::protocol::ServerMsg,
 };
 use lodestone_core::document_status::DocumentStatus;
@@ -61,8 +61,10 @@ pub async fn upload(
         )));
     }
 
+    let txn = db.begin().await?;
+    quotas::ensure_can_add_document(&txn, upload.org_id).await?;
     let document = documents::create(
-        db,
+        &txn,
         NewDocument {
             org_id: upload.org_id,
             title,
@@ -71,6 +73,7 @@ pub async fn upload(
         },
     )
     .await?;
+    txn.commit().await?;
 
     events.publish(
         document.org_id,

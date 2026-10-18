@@ -6,3 +6,4 @@ pub mod ingestion;
 pub mod invitations;
 pub mod members;
 pub mod organizations;
+pub mod quotas;
