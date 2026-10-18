@@ -46,6 +46,10 @@ pub fn app_router(state: AppState) -> Router {
                 .get(handlers::documents::list),
         )
         .route(
+            "/api/orgs/{id}/conversations",
+            post(handlers::conversations::create),
+        )
+        .route(
             "/api/documents/{id}",
             get(handlers::documents::get).delete(handlers::documents::delete),
         )
