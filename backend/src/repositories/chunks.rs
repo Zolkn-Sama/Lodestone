@@ -1,5 +1,6 @@
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, Set, prelude::PgVector,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, Set,
+    Statement, TransactionTrait, prelude::PgVector,
 };
 use uuid::Uuid;
 
@@ -53,4 +54,69 @@ pub async fn delete_for_document<C: ConnectionTrait>(
         .exec(conn)
         .await?;
     Ok(())
+}
+
+/// Un fragment retrouvé par la recherche, avec le titre de son document.
+#[derive(Debug, Clone)]
+pub struct RetrievedChunk {
+    pub chunk_id: Uuid,
+    pub document_id: Uuid,
+    pub title: String,
+    pub chunk_index: i32,
+    pub content: String,
+    /// Similarité cosinus, de -1 à 1 (1 = identique).
+    pub score: f32,
+}
+
+/// Les `limit` fragments de l'org les plus proches de `embedding` (cosinus).
+///
+/// Isolation tenant : le filtre `org_id` est dans la requête elle-même.
+///
+/// Pour une org de taille modeste, Postgres passe par l'index `org_id` puis
+/// trie exactement : le résultat est exact. Pour une grosse org, il peut
+/// préférer l'index HNSW, qui ne renvoie qu'une quarantaine de candidats
+/// (toutes orgs confondues) AVANT le filtre : on risquerait alors moins de
+/// `limit` résultats. `hnsw.iterative_scan` (pgvector >= 0.8) fait continuer
+/// le parcours de l'index jusqu'à en avoir assez.
+pub async fn search(
+    db: &DatabaseConnection,
+    org_id: Uuid,
+    embedding: Vec<f32>,
+    limit: u64,
+) -> Result<Vec<RetrievedChunk>, DbErr> {
+    let txn = db.begin().await?;
+    // SET LOCAL : limité à cette transaction, sans effet sur les autres requêtes.
+    txn.execute_unprepared("SET LOCAL hnsw.iterative_scan = strict_order")
+        .await?;
+    let rows = txn
+        .query_all(Statement::from_sql_and_values(
+            txn.get_database_backend(),
+            "SELECT c.id, c.document_id, d.title, c.chunk_index, c.content,
+                    (1 - (c.embedding <=> $1))::real AS score
+             FROM document_chunks c
+             JOIN documents d ON d.id = c.document_id
+             WHERE c.org_id = $2
+             ORDER BY c.embedding <=> $1
+             LIMIT $3",
+            [
+                PgVector::from(embedding).into(),
+                org_id.into(),
+                i64::try_from(limit).unwrap_or(i64::MAX).into(),
+            ],
+        ))
+        .await?;
+    txn.commit().await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(RetrievedChunk {
+                chunk_id: row.try_get("", "id")?,
+                document_id: row.try_get("", "document_id")?,
+                title: row.try_get("", "title")?,
+                chunk_index: row.try_get("", "chunk_index")?,
+                content: row.try_get("", "content")?,
+                score: row.try_get("", "score")?,
+            })
+        })
+        .collect()
 }

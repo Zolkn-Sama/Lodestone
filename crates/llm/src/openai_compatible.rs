@@ -14,6 +14,19 @@ pub struct OpenAiCompatibleClient {
     api_key: Option<String>,
     embedding_model: String,
     embedding_dimensions: usize,
+    document_prefix: &'static str,
+    query_prefix: &'static str,
+}
+
+/// Préfixes attendus par le modèle d'embedding : nomic-embed-text a été
+/// entraîné avec `search_document:` / `search_query:` et cherche nettement
+/// mieux avec. Les autres modèles (OpenAI…) n'en veulent pas.
+fn prefixes_for(model: &str) -> (&'static str, &'static str) {
+    if model.contains("nomic-embed") {
+        ("search_document: ", "search_query: ")
+    } else {
+        ("", "")
+    }
 }
 
 #[derive(Serialize)]
@@ -45,12 +58,16 @@ impl OpenAiCompatibleClient {
             .timeout(Duration::from_secs(120))
             .build()
             .map_err(|e| LlmError::Transport(e.to_string()))?;
+        let embedding_model = embedding_model.into();
+        let (document_prefix, query_prefix) = prefixes_for(&embedding_model);
         Ok(Self {
             http,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key,
-            embedding_model: embedding_model.into(),
+            embedding_model,
             embedding_dimensions,
+            document_prefix,
+            query_prefix,
         })
     }
 }
@@ -118,6 +135,14 @@ impl LlmClient for OpenAiCompatibleClient {
 
     fn embedding_dimensions(&self) -> usize {
         self.embedding_dimensions
+    }
+
+    fn document_prefix(&self) -> &str {
+        self.document_prefix
+    }
+
+    fn query_prefix(&self) -> &str {
+        self.query_prefix
     }
 }
 
@@ -268,6 +293,36 @@ mod tests {
             client.embed(&texts(1)).await,
             Err(LlmError::Transport(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn prefixes_nomic_pour_documents_et_questions() {
+        let (url, seen) = fake_server(reply_ok).await;
+        let nomic = OpenAiCompatibleClient::new(url.clone(), None, "nomic-embed-text:latest", 3)
+            .expect("client");
+        nomic.embed_documents(&texts(1)).await.expect("documents");
+        nomic.embed_query("congés ?").await.expect("question");
+
+        let other =
+            OpenAiCompatibleClient::new(url, None, "text-embedding-3-small", 3).expect("client");
+        other.embed_documents(&texts(1)).await.expect("documents");
+        other.embed_query("congés ?").await.expect("question");
+
+        let inputs: Vec<Value> = seen
+            .lock()
+            .expect("lock")
+            .iter()
+            .map(|(_, body)| body["input"].clone())
+            .collect();
+        assert_eq!(
+            inputs,
+            vec![
+                json!(["search_document: texte 0"]),
+                json!(["search_query: congés ?"]),
+                json!(["texte 0"]),
+                json!(["congés ?"]),
+            ]
+        );
     }
 
     /// Contre un vrai Ollama (`ollama serve` + `ollama pull nomic-embed-text`) :

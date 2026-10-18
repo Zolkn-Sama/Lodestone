@@ -120,7 +120,7 @@ async fn run(
     let mut rows = Vec::with_capacity(chunks.len());
     for batch in chunks.chunks(EMBED_BATCH) {
         let texts: Vec<String> = batch.iter().map(|c| c.content.clone()).collect();
-        let vectors = llm.embed(&texts).await?;
+        let vectors = llm.embed_documents(&texts).await?;
         for (chunk, embedding) in batch.iter().zip(vectors) {
             check_dimensions(embedding.len())?;
             rows.push(NewChunk {

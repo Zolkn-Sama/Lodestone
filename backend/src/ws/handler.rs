@@ -23,6 +23,7 @@ use crate::{
     error::AppError,
     events::OrgEvent,
     repositories,
+    services::{self, chat::ChatError},
     state::AppState,
     ws::protocol::{ClientMsg, ServerMsg},
 };
@@ -117,7 +118,7 @@ async fn handle_socket(
     while let Some(frame) = stream.next().await {
         let reply = match frame {
             Ok(Message::Text(text)) => match serde_json::from_str::<ClientMsg>(&text) {
-                Ok(msg) => handle_message(msg).await,
+                Ok(msg) => handle_message(&state, user_id, msg).await,
                 Err(e) => Some(error(format!("message invalide : {e}"))),
             },
             Ok(Message::Binary(_)) => Some(error("seuls les messages texte (JSON) sont acceptés")),
@@ -169,11 +170,39 @@ async fn forward_org_events(
     }
 }
 
-async fn handle_message(msg: ClientMsg) -> Option<ServerMsg> {
+async fn handle_message(state: &AppState, user_id: Uuid, msg: ClientMsg) -> Option<ServerMsg> {
     match msg {
         ClientMsg::Ping => Some(ServerMsg::Pong),
-        // Branché sur le pipeline RAG avec RAG-01.
-        ClientMsg::Ask { .. } => Some(error("les questions ne sont pas encore disponibles")),
+        ClientMsg::Ask {
+            conversation_id,
+            question,
+        } => {
+            let retrieval = services::chat::retrieve(
+                &state.db,
+                state.llm.as_ref(),
+                user_id,
+                conversation_id,
+                &question,
+            )
+            .await;
+            match retrieval {
+                // La génération de la réponse (token…, done) arrive avec RAG-03.
+                Ok(retrieval) => Some(ServerMsg::Sources {
+                    citations: services::chat::citations(&retrieval.chunks),
+                }),
+                Err(e) => {
+                    match &e {
+                        ChatError::Llm(_) | ChatError::Database(_) => {
+                            tracing::error!(%user_id, %conversation_id, error = %e, "échec de la recherche");
+                        }
+                        _ => {
+                            tracing::debug!(%user_id, %conversation_id, error = %e, "question refusée")
+                        }
+                    }
+                    Some(error(e.user_message()))
+                }
+            }
+        }
     }
 }
 
