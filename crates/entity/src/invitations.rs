@@ -13,7 +13,8 @@ pub struct Model {
     pub role: String,
     #[sea_orm(unique)]
     pub token_hash: String,
-    pub invited_by: Uuid,
+    /// `None` si l'invitant a supprimé son compte (l'invitation reste valable).
+    pub invited_by: Option<Uuid>,
     pub expires_at: DateTimeWithTimeZone,
     pub accepted_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
@@ -34,7 +35,7 @@ pub enum Relation {
         from = "Column::InvitedBy",
         to = "super::users::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "SetNull"
     )]
     Users,
 }
