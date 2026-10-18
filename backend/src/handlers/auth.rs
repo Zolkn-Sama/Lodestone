@@ -3,8 +3,8 @@ use validator::Validate;
 
 use crate::{
     dto::auth::{
-        ForgotPasswordRequest, LoginRequest, MeResponse, RefreshRequest, RegisterRequest,
-        ResetPasswordRequest, UserResponse,
+        DeleteAccountRequest, ForgotPasswordRequest, LoginRequest, MeResponse, RefreshRequest,
+        RegisterRequest, ResetPasswordRequest, UserResponse,
     },
     error::AppError,
     extractors::{auth_user::AuthUser, client_ip::ClientIp},
@@ -163,4 +163,44 @@ pub async fn logout(
 ) -> Result<impl IntoResponse, AppError> {
     services::auth::logout(&state.db, body.refresh_token).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /api/auth/me — supprime le compte (RGPD, droit à l'effacement).
+/// Corps : `{"password": "…"}` en confirmation. Les essais de mot de passe
+/// sont limités comme à la connexion.
+pub async fn delete_me(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<DeleteAccountRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let key = format!("delete-account|{}", user.user_id);
+    state
+        .limits
+        .login_failures
+        .check(&key)
+        .map_err(AppError::TooManyRequests)?;
+    match services::account::delete_account(&state.db, user.user_id, &body.password).await {
+        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Err(AppError::Unauthorized) => {
+            state.limits.login_failures.record(&key);
+            Err(AppError::Unauthorized)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// GET /api/auth/me/export — toutes ses données personnelles (RGPD, droit à la
+/// portabilité), en fichier JSON à télécharger.
+pub async fn export_me(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<impl IntoResponse, AppError> {
+    let export = services::account::export(&state.db, user.user_id).await?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_DISPOSITION,
+            "attachment; filename=\"lodestone-mes-donnees.json\"",
+        )],
+        Json(export),
+    ))
 }

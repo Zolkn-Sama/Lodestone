@@ -26,7 +26,11 @@ pub fn app_router(state: AppState) -> Router {
         .route("/ws", get(ws::handler::ws_handler))
         .route("/api/auth/register", post(handlers::auth::register))
         .route("/api/auth/login", post(handlers::auth::login))
-        .route("/api/auth/me", get(handlers::auth::me))
+        .route(
+            "/api/auth/me",
+            get(handlers::auth::me).delete(handlers::auth::delete_me),
+        )
+        .route("/api/auth/me/export", get(handlers::auth::export_me))
         .route("/api/auth/refresh", post(handlers::auth::refresh))
         .route("/api/auth/logout", post(handlers::auth::logout))
         .route(

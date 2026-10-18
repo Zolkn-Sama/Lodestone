@@ -25,7 +25,7 @@ pub async fn create<C: ConnectionTrait>(
         title: Set(new.title),
         source_type: Set(new.source_type),
         status: Set(DocumentStatus::Pending.as_str().to_string()),
-        uploaded_by: Set(new.uploaded_by),
+        uploaded_by: Set(Some(new.uploaded_by)),
         ..Default::default()
     }
     .insert(conn)
