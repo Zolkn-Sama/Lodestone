@@ -71,7 +71,7 @@ async fn upload_txt_puis_ingestion() {
         .expect("requête")
         .expect("document");
     assert_eq!(row.org_id, org);
-    assert_eq!(row.uploaded_by, owner.id);
+    assert_eq!(row.uploaded_by, Some(owner.id));
 }
 
 #[tokio::test]

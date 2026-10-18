@@ -26,7 +26,7 @@ pub async fn create<C: ConnectionTrait>(
         email: Set(new.email),
         role: Set(new.role.as_str().to_string()),
         token_hash: Set(new.token_hash),
-        invited_by: Set(new.invited_by),
+        invited_by: Set(Some(new.invited_by)),
         expires_at: Set(new.expires_at.into()),
         accepted_at: Set(None),
         ..Default::default()

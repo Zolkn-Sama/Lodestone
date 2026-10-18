@@ -71,3 +71,9 @@ pub struct ResetPasswordRequest {
     #[validate(length(min = 8, message = "mot de passe : 8 caractères minimum"))]
     pub password: String,
 }
+
+/// Confirmation de la suppression du compte.
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    pub password: String,
+}
