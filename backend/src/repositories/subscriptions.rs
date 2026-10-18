@@ -8,6 +8,11 @@ pub struct Subscription {
     pub seats: Option<i32>,
     pub last_event_at: i64,
     pub stripe_item_id: Option<String>,
+    /// `month` | `year` (inconnu tant qu'aucun événement d'abonnement n'est arrivé).
+    pub billing_interval: Option<String>,
+    pub current_period_end: Option<i64>,
+    /// Bascule programmée à l'échéance.
+    pub scheduled_interval: Option<String>,
 }
 
 fn from_row(row: sea_orm::QueryResult) -> Result<Subscription, DbErr> {
@@ -18,11 +23,14 @@ fn from_row(row: sea_orm::QueryResult) -> Result<Subscription, DbErr> {
         seats: row.try_get("", "seats")?,
         last_event_at: row.try_get("", "last_event_at")?,
         stripe_item_id: row.try_get("", "stripe_item_id")?,
+        billing_interval: row.try_get("", "billing_interval")?,
+        current_period_end: row.try_get("", "current_period_end")?,
+        scheduled_interval: row.try_get("", "scheduled_interval")?,
     })
 }
 
-const COLUMNS: &str =
-    "org_id, stripe_subscription_id, status, seats, last_event_at, stripe_item_id";
+const COLUMNS: &str = "org_id, stripe_subscription_id, status, seats, last_event_at, \
+     stripe_item_id, billing_interval, current_period_end, scheduled_interval";
 
 /// L'abonnement de l'org, verrouillé jusqu'à la fin de la transaction.
 pub async fn find_by_org_for_update<C: ConnectionTrait>(
@@ -78,6 +86,8 @@ pub struct SubscriptionUpdate<'a> {
     pub status: &'a str,
     pub seats: Option<i32>,
     pub item_id: Option<&'a str>,
+    pub interval: Option<&'a str>,
+    pub current_period_end: Option<i64>,
     pub event_at: i64,
 }
 
@@ -87,8 +97,9 @@ pub async fn upsert<C: ConnectionTrait>(conn: &C, u: SubscriptionUpdate<'_>) -> 
     conn.execute(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "INSERT INTO subscriptions
-            (org_id, stripe_subscription_id, stripe_customer_id, status, seats, last_event_at, stripe_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (org_id, stripe_subscription_id, stripe_customer_id, status, seats, last_event_at,
+             stripe_item_id, billing_interval, current_period_end)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (org_id) DO UPDATE SET
             stripe_subscription_id = EXCLUDED.stripe_subscription_id,
             stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, subscriptions.stripe_customer_id),
@@ -96,6 +107,13 @@ pub async fn upsert<C: ConnectionTrait>(conn: &C, u: SubscriptionUpdate<'_>) -> 
             seats = COALESCE(EXCLUDED.seats, subscriptions.seats),
             last_event_at = EXCLUDED.last_event_at,
             stripe_item_id = COALESCE(EXCLUDED.stripe_item_id, subscriptions.stripe_item_id),
+            billing_interval = COALESCE(EXCLUDED.billing_interval, subscriptions.billing_interval),
+            current_period_end = COALESCE(EXCLUDED.current_period_end, subscriptions.current_period_end),
+            -- La bascule programmée a eu lieu : plus rien en attente.
+            scheduled_interval = CASE
+                WHEN EXCLUDED.billing_interval = subscriptions.scheduled_interval THEN NULL
+                ELSE subscriptions.scheduled_interval
+            END,
             updated_at = now()",
         [
             u.org_id.into(),
@@ -105,6 +123,8 @@ pub async fn upsert<C: ConnectionTrait>(conn: &C, u: SubscriptionUpdate<'_>) -> 
             u.seats.into(),
             u.event_at.into(),
             u.item_id.map(str::to_string).into(),
+            u.interval.map(str::to_string).into(),
+            u.current_period_end.into(),
         ],
     ))
     .await?;
@@ -138,6 +158,24 @@ pub async fn set_seats<C: ConnectionTrait>(
         conn.get_database_backend(),
         "UPDATE subscriptions SET seats = $1, updated_at = now() WHERE org_id = $2",
         [seats.into(), org_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Périodicité en cours et bascule programmée, mises à jour sans attendre le
+/// webhook (affichage immédiat ; le webhook confirmera).
+pub async fn set_interval<C: ConnectionTrait>(
+    conn: &C,
+    org_id: Uuid,
+    interval: &str,
+    scheduled: Option<&str>,
+) -> Result<(), DbErr> {
+    conn.execute(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE subscriptions SET billing_interval = $1, scheduled_interval = $2, updated_at = now()
+         WHERE org_id = $3",
+        [interval.into(), scheduled.map(str::to_string).into(), org_id.into()],
     ))
     .await?;
     Ok(())
