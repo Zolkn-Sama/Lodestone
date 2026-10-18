@@ -1,16 +1,21 @@
-//! Chat RAG : retrouver les fragments pertinents pour une question, puis
-//! générer la réponse en streaming. La persistance (RAG-04) viendra s'y ajouter.
+//! Chat RAG : retrouver les fragments pertinents pour une question, générer la
+//! réponse en streaming, puis enregistrer l'échange et ses sources.
 
 use std::collections::HashMap;
 
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use sea_orm::{DatabaseConnection, DbErr};
+use sea_orm::{DatabaseConnection, DbErr, TransactionTrait};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    repositories::{self, chunks::RetrievedChunk},
+    repositories::{
+        self,
+        chunks::RetrievedChunk,
+        messages::{MessageRole, NewMessage},
+    },
     ws::protocol::{Citation, ServerMsg},
 };
 use lodestone_entity::conversations;
@@ -119,9 +124,10 @@ pub fn citations(chunks: &[RetrievedChunk]) -> Vec<Citation> {
 }
 
 /// Traite une question de bout en bout et pousse les messages dans `outbox` :
-/// `sources`, puis un `token` par morceau de réponse, puis `done`.
-/// En cas d'échec, un `error` termine l'échange (sans `done`).
-/// S'arrête dès que le client n'écoute plus (`outbox` fermé).
+/// `sources`, puis un `token` par morceau de réponse, puis `done` — envoyé
+/// seulement une fois l'échange (question, réponse, sources) enregistré.
+/// En cas d'échec, un `error` termine l'échange (sans `done`) et rien n'est
+/// enregistré. S'arrête dès que le client n'écoute plus (`outbox` fermé).
 pub async fn answer(
     db: &DatabaseConnection,
     llm: &dyn LlmClient,
@@ -139,6 +145,7 @@ pub async fn answer(
         };
     }
 
+    let asked_at = Utc::now();
     let retrieval = match retrieve(db, llm, user_id, conversation_id, question).await {
         Ok(retrieval) => retrieval,
         Err(e) => {
@@ -158,14 +165,26 @@ pub async fn answer(
         citations: citations.clone(),
     });
 
-    // Identifiant du futur message de l'assistant (persisté avec RAG-04).
+    // Identifiant du message de l'assistant, annoncé dans `done`.
     let message_id = Uuid::new_v4();
+    let exchange = |answer: String| Exchange {
+        conversation_id,
+        question: question.trim().to_string(),
+        asked_at,
+        message_id,
+        answer,
+        sources: retrieval
+            .chunks
+            .iter()
+            .map(|c| (c.chunk_id, c.score))
+            .collect(),
+    };
 
     if retrieval.chunks.is_empty() {
         send!(ServerMsg::Token {
             delta: NO_SOURCE_REPLY.to_string(),
         });
-        send!(ServerMsg::Done { message_id });
+        send!(finish(db, exchange(NO_SOURCE_REPLY.to_string())).await);
         return;
     }
 
@@ -187,11 +206,11 @@ pub async fn answer(
         }
     };
 
-    let mut produced = false;
+    let mut answer = String::new();
     while let Some(item) = stream.next().await {
         match item {
             Ok(delta) => {
-                produced = true;
+                answer.push_str(&delta);
                 send!(ServerMsg::Token { delta });
             }
             Err(e) => {
@@ -202,11 +221,65 @@ pub async fn answer(
         }
     }
 
-    if produced {
-        send!(ServerMsg::Done { message_id });
-    } else {
+    if answer.is_empty() {
         send!(error("le modèle n'a produit aucune réponse"));
+    } else {
+        send!(finish(db, exchange(answer)).await);
     }
+}
+
+/// Un échange question/réponse terminé, prêt à être enregistré.
+struct Exchange {
+    conversation_id: Uuid,
+    question: String,
+    asked_at: DateTime<Utc>,
+    message_id: Uuid,
+    answer: String,
+    /// Fragments retenus et leur score.
+    sources: Vec<(Uuid, f32)>,
+}
+
+/// Enregistre l'échange puis renvoie `done` ; `error` si l'écriture échoue
+/// (ex. conversation supprimée pendant la génération).
+async fn finish(db: &DatabaseConnection, exchange: Exchange) -> ServerMsg {
+    let message_id = exchange.message_id;
+    let conversation_id = exchange.conversation_id;
+    match save_exchange(db, exchange).await {
+        Ok(()) => ServerMsg::Done { message_id },
+        Err(e) => {
+            tracing::error!(%conversation_id, error = %e, "échange non enregistré");
+            error("la réponse n'a pas pu être enregistrée")
+        }
+    }
+}
+
+/// Question + réponse + sources, tout ou rien.
+async fn save_exchange(db: &DatabaseConnection, exchange: Exchange) -> Result<(), DbErr> {
+    let txn = db.begin().await?;
+    repositories::messages::create(
+        &txn,
+        NewMessage {
+            id: Uuid::new_v4(),
+            conversation_id: exchange.conversation_id,
+            role: MessageRole::User,
+            content: exchange.question,
+            created_at: exchange.asked_at,
+        },
+    )
+    .await?;
+    repositories::messages::create(
+        &txn,
+        NewMessage {
+            id: exchange.message_id,
+            conversation_id: exchange.conversation_id,
+            role: MessageRole::Assistant,
+            content: exchange.answer,
+            created_at: Utc::now(),
+        },
+    )
+    .await?;
+    repositories::messages::add_sources(&txn, exchange.message_id, &exchange.sources).await?;
+    txn.commit().await
 }
 
 /// Regroupe les extraits par document, dans l'ordre des citations : le

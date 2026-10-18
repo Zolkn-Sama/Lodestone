@@ -26,3 +26,41 @@ impl From<lodestone_entity::conversations::Model> for ConversationResponse {
         }
     }
 }
+
+/// Une conversation de l'historique.
+#[derive(Debug, Serialize)]
+pub struct ConversationSummaryResponse {
+    pub id: Uuid,
+    pub title: String,
+    pub created_at: DateTimeWithTimeZone,
+    /// Dernière activité (dernier message, ou création).
+    pub updated_at: DateTimeWithTimeZone,
+}
+
+/// Une conversation rouverte : ses messages et leurs sources.
+#[derive(Debug, Serialize)]
+pub struct ConversationDetailResponse {
+    pub id: Uuid,
+    pub title: String,
+    pub created_at: DateTimeWithTimeZone,
+    pub messages: Vec<MessageResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MessageResponse {
+    pub id: Uuid,
+    /// `user` | `assistant`
+    pub role: String,
+    pub content: String,
+    pub created_at: DateTimeWithTimeZone,
+    /// Documents cités (réponses de l'assistant), meilleur score d'abord.
+    pub sources: Vec<SourceResponse>,
+}
+
+/// Même forme que les citations envoyées en direct (`sources` sur la WebSocket).
+#[derive(Debug, Serialize)]
+pub struct SourceResponse {
+    pub document_id: Uuid,
+    pub title: String,
+    pub score: f32,
+}
