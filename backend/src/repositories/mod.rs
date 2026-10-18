@@ -6,4 +6,5 @@ pub mod memberships;
 pub mod messages;
 pub mod organizations;
 pub mod refresh_tokens;
+pub mod usage;
 pub mod users;

@@ -39,6 +39,7 @@ pub fn app_router(state: AppState) -> Router {
                 .patch(handlers::organizations::rename)
                 .delete(handlers::organizations::delete),
         )
+        .route("/api/orgs/{id}/usage", get(handlers::organizations::usage))
         .route("/api/orgs/{id}/members", get(handlers::members::list))
         .route(
             "/api/orgs/{id}/invitations",

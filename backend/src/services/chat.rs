@@ -168,7 +168,9 @@ pub async fn answer(
 
     // Identifiant du message de l'assistant, annoncé dans `done`.
     let message_id = Uuid::new_v4();
+    let org_id = retrieval.conversation.org_id;
     let exchange = |answer: String| Exchange {
+        org_id,
         conversation_id,
         question: question.trim().to_string(),
         asked_at,
@@ -231,6 +233,7 @@ pub async fn answer(
 
 /// Un échange question/réponse terminé, prêt à être enregistré.
 struct Exchange {
+    org_id: Uuid,
     conversation_id: Uuid,
     question: String,
     asked_at: DateTime<Utc>,
@@ -254,7 +257,7 @@ async fn finish(db: &DatabaseConnection, exchange: Exchange) -> ServerMsg {
     }
 }
 
-/// Titre éventuel + question + réponse + sources, tout ou rien.
+/// Titre éventuel + question + réponse + sources + compteur, tout ou rien.
 async fn save_exchange(db: &DatabaseConnection, exchange: Exchange) -> Result<(), DbErr> {
     let txn = db.begin().await?;
     // Première question d'une conversation sans titre choisi : elle devient le titre.
@@ -288,6 +291,8 @@ async fn save_exchange(db: &DatabaseConnection, exchange: Exchange) -> Result<()
     )
     .await?;
     repositories::messages::add_sources(&txn, exchange.message_id, &exchange.sources).await?;
+    // Compté seulement ici : une question qui n'a pas abouti ne consomme rien.
+    repositories::usage::increment_questions(&txn, exchange.org_id).await?;
     txn.commit().await
 }
 
