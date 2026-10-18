@@ -26,6 +26,9 @@ struct SessionResponse {
 #[derive(Deserialize)]
 struct PriceResponse {
     currency: String,
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    unit_amount: Option<u64>,
     billing_scheme: Option<String>,
     tiers_mode: Option<String>,
     recurring: Option<Recurring>,
@@ -123,20 +126,29 @@ impl PaymentProvider for StripeClient {
         request: &CheckoutRequest,
     ) -> Result<CheckoutSession, BillingError> {
         let org_id = request.org_id.to_string();
-        let seats = request.seats.to_string();
-        // L'org est rattachée à la session ET à l'abonnement : les webhooks
-        // d'abonnement (mise à jour, résiliation) la retrouvent sans requête.
-        let form = [
-            ("mode", "subscription"),
-            ("line_items[0][price]", request.price_id.as_str()),
-            ("line_items[0][quantity]", seats.as_str()),
-            ("client_reference_id", org_id.as_str()),
-            ("metadata[org_id]", org_id.as_str()),
-            ("subscription_data[metadata][org_id]", org_id.as_str()),
-            ("customer_email", request.customer_email.as_str()),
-            ("success_url", request.success_url.as_str()),
-            ("cancel_url", request.cancel_url.as_str()),
+        let mut form: Vec<(String, String)> = vec![
+            ("mode".into(), "subscription".into()),
+            ("client_reference_id".into(), org_id.clone()),
+            ("customer_email".into(), request.customer_email.clone()),
+            ("success_url".into(), request.success_url.clone()),
+            ("cancel_url".into(), request.cancel_url.clone()),
         ];
+        for (i, item) in request.items.iter().enumerate() {
+            form.push((format!("line_items[{i}][price]"), item.price_id.clone()));
+            form.push((
+                format!("line_items[{i}][quantity]"),
+                item.quantity.to_string(),
+            ));
+        }
+        // L'org (et le reste des métadonnées) est rattachée à la session ET à
+        // l'abonnement : les webhooks d'abonnement la retrouvent sans requête.
+        let metadata =
+            std::iter::once(("org_id".to_string(), org_id)).chain(request.metadata.iter().cloned());
+        for (key, value) in metadata {
+            form.push((format!("metadata[{key}]"), value.clone()));
+            form.push((format!("subscription_data[metadata][{key}]"), value));
+        }
+        let form: Vec<(&str, &str)> = form.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let session: SessionResponse =
             json(self.post_form("/checkout/sessions", &form).await?).await?;
         let url = session
@@ -248,6 +260,8 @@ impl PaymentProvider for StripeClient {
         Ok(PriceInfo {
             currency: price.currency,
             interval: price.recurring.map(|r| r.interval),
+            one_time: price.kind.as_deref() == Some("one_time"),
+            unit_amount: price.unit_amount,
             tiered_volume: price.billing_scheme.as_deref() == Some("tiered")
                 && price.tiers_mode.as_deref() == Some("volume"),
             tiers: price
@@ -272,6 +286,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::CheckoutItem;
 
     type Seen = Arc<Mutex<Vec<(HeaderMap, Vec<(String, String)>)>>>;
 
@@ -307,8 +322,17 @@ mod tests {
     fn request() -> CheckoutRequest {
         CheckoutRequest {
             org_id: Uuid::nil(),
-            price_id: "price_pro".into(),
-            seats: 4,
+            items: vec![
+                CheckoutItem {
+                    price_id: "price_pro".into(),
+                    quantity: 4,
+                },
+                CheckoutItem {
+                    price_id: "price_setup".into(),
+                    quantity: 1,
+                },
+            ],
+            metadata: vec![("product".into(), "pro".into())],
             customer_email: "owner@acme.fr".into(),
             success_url: "https://app.lodestone.fr/billing/ok".into(),
             cancel_url: "https://app.lodestone.fr/billing".into(),
@@ -347,6 +371,10 @@ mod tests {
             Some(org.as_str())
         );
         assert_eq!(get("customer_email"), Some("owner@acme.fr"));
+        assert_eq!(get("line_items[1][price]"), Some("price_setup"));
+        assert_eq!(get("line_items[1][quantity]"), Some("1"));
+        assert_eq!(get("metadata[product]"), Some("pro"));
+        assert_eq!(get("subscription_data[metadata][product]"), Some("pro"));
     }
 
     #[tokio::test]
