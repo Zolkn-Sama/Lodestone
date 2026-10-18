@@ -62,3 +62,17 @@ pub async fn find_by_id<C: ConnectionTrait>(
 ) -> Result<Option<users::Model>, DbErr> {
     users::Entity::find_by_id(id).one(db).await
 }
+
+pub async fn set_password_hash<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+    password_hash: &str,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE users SET password_hash = $1 WHERE id = $2",
+        [password_hash.into(), id.into()],
+    ))
+    .await?;
+    Ok(())
+}

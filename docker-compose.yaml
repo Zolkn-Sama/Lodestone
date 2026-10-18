@@ -51,6 +51,18 @@ services:
     #           capabilities: [gpu]
 
   # ---------------------------------------------------------------------------
+  # Mailpit : faux serveur SMTP pour le dev. Les e-mails (invitations, mot de
+  # passe oublié) n'arrivent nulle part, ils se lisent sur http://localhost:8025
+  # Backend : SMTP_HOST=localhost SMTP_PORT=1025 SMTP_SECURITY=none MAIL_FROM=…
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # interface web
+
+  # ---------------------------------------------------------------------------
   # Le backend lui-même. Démarré seulement avec le profil "full" :
   #   docker compose up                 -> db + ollama (dev : tu lances `cargo run`)
   #   docker compose --profile full up  -> + le backend conteneurisé
@@ -72,6 +84,10 @@ services:
       JWT_SECRET: change-me-in-prod
       APP_PORT: "8090"
       RUST_LOG: "info,lodestone=debug"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURITY: none
+      MAIL_FROM: "Lodestone <no-reply@lodestone.local>"
     ports:
       - "8090:8090"
 

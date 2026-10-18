@@ -12,6 +12,7 @@ mod m20261018_140000_add_subscription_item;
 mod m20261018_160000_add_billing_interval;
 mod m20261018_180000_add_sovereign_billing;
 mod m20261018_200000_add_document_embedding_model;
+mod m20261019_090000_create_password_resets;
 
 pub struct Migrator;
 
@@ -31,6 +32,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_160000_add_billing_interval::Migration),
             Box::new(m20261018_180000_add_sovereign_billing::Migration),
             Box::new(m20261018_200000_add_document_embedding_model::Migration),
+            Box::new(m20261019_090000_create_password_resets::Migration),
         ]
     }
 }

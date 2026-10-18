@@ -46,6 +46,7 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = "1.0.103"
 dotenvy = "0.15.7"
+lettre      = { workspace = true }
 users = "0.11.0"
 
 [dev-dependencies]

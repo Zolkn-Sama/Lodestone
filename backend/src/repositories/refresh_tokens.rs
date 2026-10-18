@@ -42,3 +42,18 @@ pub async fn revoke(db: &DatabaseConnection, id: Uuid) -> Result<(), DbErr> {
     }
     Ok(())
 }
+
+/// Révoque toutes les sessions de l'utilisateur (ex. après un changement de
+/// mot de passe : un voleur de session est déconnecté).
+pub async fn revoke_all_for_user<C: sea_orm::ConnectionTrait>(
+    conn: &C,
+    user_id: Uuid,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+        [user_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
