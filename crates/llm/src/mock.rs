@@ -1,6 +1,24 @@
-use async_trait::async_trait;
+use std::{sync::Mutex, time::Duration};
 
-use crate::{client::LlmClient, error::LlmError};
+use async_trait::async_trait;
+use futures::{StreamExt, stream};
+
+use crate::{
+    client::{ChatMessage, ChatStream, LlmClient},
+    error::LlmError,
+};
+
+/// Réponse générée par défaut par le mock.
+pub const DEFAULT_MOCK_REPLY: &str = "Voici la réponse simulée, fondée sur les documents.";
+
+/// Panne simulée de la génération.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatFailure {
+    /// `chat_stream` échoue avant tout morceau (serveur injoignable…).
+    AtStart,
+    /// Le flux s'interrompt après les premiers morceaux.
+    MidStream,
+}
 
 /// Client de test : pas de réseau, résultats déterministes.
 ///
@@ -10,9 +28,16 @@ use crate::{client::LlmClient, error::LlmError};
 /// - deux textes qui partagent des mots sont proches, deux textes sans mot
 ///   commun sont presque orthogonaux. Une question sur les « congés » remonte
 ///   donc bien le document qui parle de congés.
+///
+/// Génération : renvoie `reply` découpée mot par mot (espaces conservés), avec
+/// un délai optionnel entre deux morceaux, et garde les prompts reçus.
 pub struct MockLlmClient {
     dimensions: usize,
     fail: bool,
+    reply: String,
+    token_delay: Duration,
+    chat_failure: Option<ChatFailure>,
+    chat_requests: Mutex<Vec<Vec<ChatMessage>>>,
 }
 
 impl MockLlmClient {
@@ -20,15 +45,51 @@ impl MockLlmClient {
         Self {
             dimensions,
             fail: false,
+            reply: DEFAULT_MOCK_REPLY.to_string(),
+            token_delay: Duration::ZERO,
+            chat_failure: None,
+            chat_requests: Mutex::default(),
         }
     }
 
-    /// Variante qui échoue à chaque appel (pour tester le statut `failed`).
+    /// Variante dont les embeddings échouent à chaque appel (statut `failed`).
     pub fn failing(dimensions: usize) -> Self {
         Self {
-            dimensions,
             fail: true,
+            ..Self::new(dimensions)
         }
+    }
+
+    pub fn with_reply(mut self, reply: impl Into<String>) -> Self {
+        self.reply = reply.into();
+        self
+    }
+
+    /// Délai entre deux morceaux : simule un modèle lent.
+    pub fn with_token_delay(mut self, delay: Duration) -> Self {
+        self.token_delay = delay;
+        self
+    }
+
+    pub fn with_chat_failure(mut self, failure: ChatFailure) -> Self {
+        self.chat_failure = Some(failure);
+        self
+    }
+
+    /// Les prompts reçus par `chat_stream`, dans l'ordre.
+    pub fn chat_requests(&self) -> Vec<Vec<ChatMessage>> {
+        self.chat_requests
+            .lock()
+            .map(|r| r.clone())
+            .unwrap_or_default()
+    }
+
+    /// Les morceaux que `chat_stream` produit : un par mot, espace compris.
+    pub fn reply_tokens(&self) -> Vec<String> {
+        self.reply
+            .split_inclusive(' ')
+            .map(str::to_string)
+            .collect()
     }
 
     /// Le vecteur que `embed` produit pour `text`.
@@ -77,6 +138,36 @@ fn word_vector(word: &str, dimensions: usize) -> impl Iterator<Item = f32> {
 
 #[async_trait]
 impl LlmClient for MockLlmClient {
+    async fn chat_stream(&self, messages: &[ChatMessage]) -> Result<ChatStream, LlmError> {
+        if let Ok(mut requests) = self.chat_requests.lock() {
+            requests.push(messages.to_vec());
+        }
+        if self.chat_failure == Some(ChatFailure::AtStart) {
+            return Err(LlmError::Transport(
+                "MockLlmClient : panne au démarrage".into(),
+            ));
+        }
+
+        let mut items: Vec<Result<String, LlmError>> =
+            self.reply_tokens().into_iter().map(Ok).collect();
+        if self.chat_failure == Some(ChatFailure::MidStream) {
+            items.truncate(2);
+            items.push(Err(LlmError::Transport(
+                "MockLlmClient : flux interrompu".into(),
+            )));
+        }
+
+        let delay = self.token_delay;
+        Ok(stream::iter(items)
+            .then(move |item| async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                item
+            })
+            .boxed())
+    }
+
     async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, LlmError> {
         if self.fail {
             return Err(LlmError::Transport("MockLlmClient::failing".into()));
@@ -120,6 +211,41 @@ mod tests {
         let sans_rapport = mock.vector_for("serveur kubernetes cluster");
         assert!(cosine(&question, &conges) > cosine(&question, &frais));
         assert!(cosine(&question, &sans_rapport).abs() < 0.2);
+    }
+
+    #[tokio::test]
+    async fn generation_mot_par_mot_et_prompts_enregistres() {
+        let mock = MockLlmClient::new(768).with_reply("Vingt-cinq jours par an.");
+        let prompt = vec![ChatMessage::system("règles"), ChatMessage::user("congés ?")];
+        let tokens: Vec<String> = mock
+            .chat_stream(&prompt)
+            .await
+            .expect("flux")
+            .map(|t| t.expect("morceau"))
+            .collect()
+            .await;
+        assert_eq!(tokens, vec!["Vingt-cinq ", "jours ", "par ", "an."]);
+        assert_eq!(mock.chat_requests(), vec![prompt]);
+    }
+
+    #[tokio::test]
+    async fn pannes_de_generation() {
+        let prompt = [ChatMessage::user("x")];
+        let at_start = MockLlmClient::new(768).with_chat_failure(ChatFailure::AtStart);
+        assert!(at_start.chat_stream(&prompt).await.is_err());
+
+        let mid = MockLlmClient::new(768)
+            .with_reply("un deux trois quatre")
+            .with_chat_failure(ChatFailure::MidStream);
+        let items: Vec<_> = mid
+            .chat_stream(&prompt)
+            .await
+            .expect("flux")
+            .collect()
+            .await;
+        assert_eq!(items.len(), 3);
+        assert!(items[..2].iter().all(Result::is_ok));
+        assert!(items[2].is_err());
     }
 
     #[test]

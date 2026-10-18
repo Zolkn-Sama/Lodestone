@@ -11,8 +11,9 @@ serde_json  = { workspace = true }
 thiserror   = { workspace = true }
 async-trait = { workspace = true }
 futures     = { workspace = true }
+# Délais du MockLlmClient (simulation d'un modèle lent).
+tokio       = { workspace = true }
 
 [dev-dependencies]
 # Faux serveur OpenAI-compatible pour tester le client sans Ollama.
-tokio = { workspace = true }
 axum  = { workspace = true }
