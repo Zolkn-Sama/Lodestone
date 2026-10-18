@@ -1,4 +1,5 @@
 use axum::http::HeaderValue;
+use lodestone_core::pricing::ProPricing;
 
 /// Origine autorisée par défaut : le front Next.js en développement.
 pub const DEFAULT_CORS_ORIGIN: &str = "http://localhost:3000";
@@ -20,6 +21,8 @@ pub struct Config {
     pub app_base_url: String,
     /// `None` : facturation désactivée (les routes de paiement répondent 503).
     pub stripe: Option<StripeConfig>,
+    /// Tarif Pro (prix par siège, socle) : source de vérité côté plateforme.
+    pub pro_pricing: ProPricing,
 }
 
 /// Les trois valeurs vont ensemble : toutes ou aucune.
@@ -44,6 +47,7 @@ impl Config {
             app_port: 0,
             app_base_url: DEFAULT_CORS_ORIGIN.to_string(),
             stripe: None,
+            pro_pricing: ProPricing::default(),
         }
     }
 
@@ -74,6 +78,7 @@ impl Config {
                 .trim_end_matches('/')
                 .to_string(),
             stripe: stripe_from(|k| std::env::var(k).ok())?,
+            pro_pricing: pricing_from(|k| std::env::var(k).ok())?,
         })
     }
 }
@@ -91,6 +96,7 @@ impl std::fmt::Debug for Config {
             .field("app_port", &self.app_port)
             .field("app_base_url", &self.app_base_url)
             .field("stripe", &self.stripe.as_ref().map(|_| "configuré (***)"))
+            .field("pro_pricing", &self.pro_pricing)
             .finish()
     }
 }
@@ -115,6 +121,28 @@ fn stripe_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<St
             "configuration Stripe incomplète : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET et STRIPE_PRICE_PRO vont ensemble"
         ),
     }
+}
+
+/// PRO_SEAT_PRICE_CENTS / PRO_FLOOR_CENTS (centimes HT), défauts 2900 / 14900.
+fn pricing_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<ProPricing> {
+    let default = ProPricing::default();
+    let read = |key: &str, default: u32| -> anyhow::Result<u32> {
+        match var(key).filter(|v| !v.trim().is_empty()) {
+            None => Ok(default),
+            Some(v) => v
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("{key} : entier positif attendu (centimes), reçu « {v} »")
+                }),
+        }
+    };
+    Ok(ProPricing {
+        seat_price_cents: read("PRO_SEAT_PRICE_CENTS", default.seat_price_cents)?,
+        floor_cents: read("PRO_FLOOR_CENTS", default.floor_cents)?,
+    })
 }
 
 /// `"https://app.exemple.fr, http://localhost:3000"` -> liste d'origines.
@@ -155,6 +183,26 @@ mod tests {
                 .iter()
                 .find(|(key, _)| key == k)
                 .map(|(_, v)| v.clone())
+        }
+    }
+
+    #[test]
+    fn tarif_configurable() {
+        assert_eq!(
+            pricing_from(vars(&[])).expect("défauts"),
+            ProPricing::default()
+        );
+        let p = pricing_from(vars(&[
+            ("PRO_SEAT_PRICE_CENTS", "2500"),
+            ("PRO_FLOOR_CENTS", " 9900 "),
+        ]))
+        .expect("valide");
+        assert_eq!((p.seat_price_cents, p.floor_cents), (2500, 9900));
+        for bad in ["0", "-1", "29.00", "abc"] {
+            assert!(
+                pricing_from(vars(&[("PRO_FLOOR_CENTS", bad)])).is_err(),
+                "{bad}"
+            );
         }
     }
 

@@ -57,6 +57,14 @@ async fn main() -> anyhow::Result<()> {
             None
         }
     };
+    if let Some(provider) = &billing {
+        // Le prix configuré chez Stripe doit correspondre au tarif de la plateforme.
+        lodestone_backend::services::billing::verify_stripe_price(
+            provider.as_ref(),
+            config.pro_pricing,
+        )
+        .await;
+    }
 
     // 5. État partagé + router.
     let state = AppState {
