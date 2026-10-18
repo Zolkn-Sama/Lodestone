@@ -17,6 +17,7 @@ lodestone-migration = { workspace = true }
 lodestone-auth      = { workspace = true }
 lodestone-llm       = { workspace = true }
 lodestone-rag       = { workspace = true }
+lodestone-billing   = { workspace = true }
 
 # --- Web / runtime ---
 tokio      = { workspace = true }

@@ -30,6 +30,14 @@ pub enum AppError {
     #[error("Payload too large: {0}")]
     PayloadTooLarge(String),
 
+    /// Fonctionnalité non configurée sur ce serveur (ex. facturation sans Stripe).
+    #[error("Service unavailable: {0}")]
+    Unavailable(String),
+
+    /// Un service tiers (Stripe…) a échoué.
+    #[error("Bad gateway: {0}")]
+    Upstream(String),
+
     /// Limite du plan atteinte : 402, avec le détail pour proposer un upgrade.
     #[error("{}", .0.message())]
     QuotaExceeded(crate::services::quotas::QuotaExceeded),
@@ -76,6 +84,8 @@ impl IntoResponse for AppError {
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.to_string()),
             AppError::PayloadTooLarge(m) => (StatusCode::PAYLOAD_TOO_LARGE, m.to_string()),
             AppError::QuotaExceeded(q) => (StatusCode::PAYMENT_REQUIRED, q.message()),
+            AppError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.to_string()),
+            AppError::Upstream(m) => (StatusCode::BAD_GATEWAY, m.to_string()),
             AppError::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal server error".to_string(),

@@ -40,6 +40,12 @@ pub fn app_router(state: AppState) -> Router {
                 .delete(handlers::organizations::delete),
         )
         .route("/api/orgs/{id}/usage", get(handlers::organizations::usage))
+        .route("/api/orgs/{id}/billing", get(handlers::billing::status))
+        .route(
+            "/api/orgs/{id}/billing/checkout",
+            post(handlers::billing::checkout),
+        )
+        .route("/api/billing/webhook", post(handlers::billing::webhook))
         .route("/api/orgs/{id}/members", get(handlers::members::list))
         .route(
             "/api/orgs/{id}/invitations",

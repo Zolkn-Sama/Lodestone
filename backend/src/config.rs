@@ -16,6 +16,18 @@ pub struct Config {
     pub chat_model: String,
     pub(crate) jwt_secret: String,
     pub app_port: u16,
+    /// URL du front : pages de retour après paiement.
+    pub app_base_url: String,
+    /// `None` : facturation désactivée (les routes de paiement répondent 503).
+    pub stripe: Option<StripeConfig>,
+}
+
+/// Les trois valeurs vont ensemble : toutes ou aucune.
+pub struct StripeConfig {
+    pub secret_key: String,
+    pub webhook_secret: String,
+    /// Prix Stripe de l'abonnement Pro par siège (`price_…`).
+    pub pro_price_id: String,
 }
 
 impl Config {
@@ -30,6 +42,8 @@ impl Config {
             chat_model: "llama3.1".to_string(),
             jwt_secret,
             app_port: 0,
+            app_base_url: DEFAULT_CORS_ORIGIN.to_string(),
+            stripe: None,
         }
     }
 
@@ -55,6 +69,11 @@ impl Config {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8090),
+            app_base_url: std::env::var("APP_BASE_URL")
+                .unwrap_or_else(|_| DEFAULT_CORS_ORIGIN.to_string())
+                .trim_end_matches('/')
+                .to_string(),
+            stripe: stripe_from(|k| std::env::var(k).ok())?,
         })
     }
 }
@@ -70,7 +89,31 @@ impl std::fmt::Debug for Config {
             .field("chat_model", &self.chat_model)
             .field("jwt_secret", &"***")
             .field("app_port", &self.app_port)
+            .field("app_base_url", &self.app_base_url)
+            .field("stripe", &self.stripe.as_ref().map(|_| "configuré (***)"))
             .finish()
+    }
+}
+
+/// STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_PRO : toutes ou
+/// aucune. Une configuration partielle fait échouer le démarrage plutôt que de
+/// laisser une facturation à moitié branchée.
+fn stripe_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<StripeConfig>> {
+    let get = |k: &str| var(k).filter(|v| !v.trim().is_empty());
+    match (
+        get("STRIPE_SECRET_KEY"),
+        get("STRIPE_WEBHOOK_SECRET"),
+        get("STRIPE_PRICE_PRO"),
+    ) {
+        (Some(secret_key), Some(webhook_secret), Some(pro_price_id)) => Ok(Some(StripeConfig {
+            secret_key,
+            webhook_secret,
+            pro_price_id,
+        })),
+        (None, None, None) => Ok(None),
+        _ => anyhow::bail!(
+            "configuration Stripe incomplète : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET et STRIPE_PRICE_PRO vont ensemble"
+        ),
     }
 }
 
@@ -101,6 +144,56 @@ pub fn parse_origins(raw: &str) -> anyhow::Result<Vec<HeaderValue>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |k| {
+            pairs
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
+    #[test]
+    fn stripe_tout_ou_rien() {
+        let complete = [
+            ("STRIPE_SECRET_KEY", "sk_test_1"),
+            ("STRIPE_WEBHOOK_SECRET", "whsec_1"),
+            ("STRIPE_PRICE_PRO", "price_1"),
+        ];
+        let stripe = stripe_from(vars(&complete))
+            .expect("ok")
+            .expect("configuré");
+        assert_eq!(stripe.pro_price_id, "price_1");
+
+        assert!(
+            stripe_from(vars(&[])).expect("ok").is_none(),
+            "aucune : désactivé"
+        );
+        assert!(
+            stripe_from(vars(&[("STRIPE_SECRET_KEY", "  ")]))
+                .expect("ok")
+                .is_none(),
+            "valeur vide = absente"
+        );
+        for missing in 0..3 {
+            let partial: Vec<(&str, &str)> = complete
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != missing)
+                .map(|(_, p)| *p)
+                .collect();
+            assert!(
+                stripe_from(vars(&partial)).is_err(),
+                "sans {}",
+                complete[missing].0
+            );
+        }
+    }
 
     #[test]
     fn origines_valides() {
