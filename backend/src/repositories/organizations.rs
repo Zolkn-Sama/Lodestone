@@ -1,6 +1,7 @@
 use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, EntityTrait, Set};
 use uuid::Uuid;
 
+use lodestone_core::plan::Plan;
 use lodestone_entity::organizations;
 
 /// Générique sur `C: ConnectionTrait` -> accepte une connexion NORMALE
@@ -44,4 +45,16 @@ pub async fn rename<C: ConnectionTrait>(
 pub async fn delete<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<bool, DbErr> {
     let res = organizations::Entity::delete_by_id(id).exec(conn).await?;
     Ok(res.rows_affected > 0)
+}
+
+/// Change le plan de l'org (Stripe le fera avec BILL-03).
+pub async fn set_plan<C: ConnectionTrait>(conn: &C, id: Uuid, plan: Plan) -> Result<(), DbErr> {
+    organizations::ActiveModel {
+        id: Set(id),
+        plan: Set(plan.as_str().to_string()),
+        ..Default::default()
+    }
+    .update(conn)
+    .await?;
+    Ok(())
 }

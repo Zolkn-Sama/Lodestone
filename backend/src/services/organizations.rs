@@ -1,7 +1,11 @@
 use sea_orm::{DatabaseConnection, TransactionTrait};
 use uuid::Uuid;
 
-use crate::{dto::organizations::MyOrgResponse, error::AppError, repositories};
+use crate::{
+    dto::organizations::{MyOrgResponse, Quota, UsageResponse, plan_of},
+    error::AppError,
+    repositories,
+};
 use lodestone_core::role::{self, Role};
 use lodestone_entity::organizations;
 
@@ -61,4 +65,30 @@ pub async fn delete(db: &DatabaseConnection, org_id: Uuid) -> Result<(), AppErro
     } else {
         Err(AppError::NotFound)
     }
+}
+
+/// Consommation de l'org face aux limites de son plan.
+pub async fn usage(db: &DatabaseConnection, org_id: Uuid) -> Result<UsageResponse, AppError> {
+    let org = get(db, org_id).await?;
+    let plan = plan_of(&org);
+    let limits = plan.limits();
+    let usage = repositories::usage::current(db, org_id).await?;
+
+    Ok(UsageResponse {
+        plan,
+        limits,
+        period: usage.period,
+        members: Quota {
+            used: usage.members,
+            limit: limits.max_members,
+        },
+        documents: Quota {
+            used: usage.documents,
+            limit: limits.max_documents,
+        },
+        questions: Quota {
+            used: usage.questions_this_month,
+            limit: limits.max_questions_per_month,
+        },
+    })
 }

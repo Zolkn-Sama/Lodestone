@@ -10,6 +10,8 @@ pub struct Model {
     pub id: Uuid,
     pub name: String,
     pub created_at: DateTimeWithTimeZone,
+    /// `free` | `pro` | `sovereign` (contrainte CHECK en base).
+    pub plan: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
