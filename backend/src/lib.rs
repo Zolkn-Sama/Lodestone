@@ -4,6 +4,8 @@ pub mod error;
 pub mod events;
 pub mod extractors;
 pub mod handlers;
+pub mod mail;
+pub mod rate_limit;
 pub mod repositories;
 pub mod router;
 pub mod services;

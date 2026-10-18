@@ -5,6 +5,7 @@ pub mod invitations;
 pub mod memberships;
 pub mod messages;
 pub mod organizations;
+pub mod password_resets;
 pub mod refresh_tokens;
 pub mod subscriptions;
 pub mod usage;

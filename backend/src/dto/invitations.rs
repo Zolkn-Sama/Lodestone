@@ -27,6 +27,9 @@ pub struct InvitationCreatedResponse {
     pub role: Role,
     pub expires_at: DateTimeWithTimeZone,
     pub token: String,
+    /// L'invitation est partie par e-mail ; sinon (SMTP non configuré),
+    /// l'admin doit transmettre le lien lui-même.
+    pub email_sent: bool,
 }
 
 #[derive(Debug, Deserialize)]

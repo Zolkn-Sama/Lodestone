@@ -1,4 +1,6 @@
 use axum::http::HeaderValue;
+
+use crate::mail::{SmtpConfig, SmtpSecurity};
 use lodestone_core::{
     plan::Plan,
     pricing::{ProPricing, SovereignPricing},
@@ -20,6 +22,10 @@ pub struct Config {
     pub chat_model: String,
     pub(crate) jwt_secret: String,
     pub app_port: u16,
+    /// SMTP pour les e-mails ; `None` : aucun e-mail envoyé (journalisé).
+    pub smtp: Option<SmtpConfig>,
+    /// Derrière un reverse proxy : l'IP du client est lue dans X-Forwarded-For.
+    pub trust_proxy_headers: bool,
     /// Plan des orgs créées : Free (SaaS) ou Sovereign (auto-hébergé, sans limite).
     pub new_org_plan: Plan,
     /// Appliquer les migrations au démarrage (défaut : oui). À désactiver si
@@ -67,6 +73,8 @@ impl Config {
             app_port: 0,
             run_migrations: true,
             new_org_plan: Plan::Free,
+            smtp: None,
+            trust_proxy_headers: false,
             app_base_url: DEFAULT_CORS_ORIGIN.to_string(),
             stripe: None,
             pro_pricing: ProPricing::default(),
@@ -96,6 +104,14 @@ impl Config {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8090),
             new_org_plan: new_org_plan_from(|k| std::env::var(k).ok())?,
+            smtp: smtp_from(|k| std::env::var(k).ok())?,
+            trust_proxy_headers: matches!(
+                std::env::var("TRUST_PROXY_HEADERS")
+                    .ok()
+                    .as_deref()
+                    .map(str::trim),
+                Some("true" | "1" | "yes")
+            ),
             run_migrations: !matches!(
                 std::env::var("RUN_MIGRATIONS")
                     .ok()
@@ -128,11 +144,63 @@ impl std::fmt::Debug for Config {
             .field("app_base_url", &self.app_base_url)
             .field("new_org_plan", &self.new_org_plan)
             .field("run_migrations", &self.run_migrations)
+            .field(
+                "smtp",
+                &self.smtp.as_ref().map(|s| format!("{}:{}", s.host, s.port)),
+            )
+            .field("trust_proxy_headers", &self.trust_proxy_headers)
             .field("stripe", &self.stripe.as_ref().map(|_| "configuré (***)"))
             .field("pro_pricing", &self.pro_pricing)
             .field("sovereign_pricing", &self.sovereign_pricing)
             .finish()
     }
+}
+
+/// SMTP_HOST (absent : e-mails désactivés), SMTP_SECURITY (`starttls` par
+/// défaut, `tls`, `none`), SMTP_PORT (défaut selon la sécurité),
+/// SMTP_USERNAME / SMTP_PASSWORD (ensemble ou aucun), MAIL_FROM (obligatoire).
+fn smtp_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<SmtpConfig>> {
+    let get = |k: &str| {
+        var(k)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let Some(host) = get("SMTP_HOST") else {
+        return Ok(None);
+    };
+    let security = match get("SMTP_SECURITY").as_deref() {
+        None | Some("starttls") => SmtpSecurity::StartTls,
+        Some("tls") => SmtpSecurity::Tls,
+        Some("none") => SmtpSecurity::None,
+        Some(other) => {
+            anyhow::bail!("SMTP_SECURITY : starttls, tls ou none attendu, reçu « {other} »")
+        }
+    };
+    let port = match get("SMTP_PORT") {
+        Some(p) => p
+            .parse::<u16>()
+            .map_err(|_| anyhow::anyhow!("SMTP_PORT : port invalide « {p} »"))?,
+        None => match security {
+            SmtpSecurity::Tls => 465,
+            SmtpSecurity::StartTls => 587,
+            SmtpSecurity::None => 25,
+        },
+    };
+    let (username, password) = match (get("SMTP_USERNAME"), get("SMTP_PASSWORD")) {
+        (Some(u), Some(p)) => (Some(u), Some(p)),
+        (None, None) => (None, None),
+        _ => anyhow::bail!("SMTP_USERNAME et SMTP_PASSWORD vont ensemble"),
+    };
+    let from = get("MAIL_FROM")
+        .ok_or_else(|| anyhow::anyhow!("MAIL_FROM est obligatoire quand SMTP_HOST est défini"))?;
+    Ok(Some(SmtpConfig {
+        host,
+        port,
+        security,
+        username,
+        password,
+        from,
+    }))
 }
 
 /// NEW_ORG_PLAN : `free` (défaut, SaaS) ou `sovereign` (installation
@@ -334,6 +402,54 @@ mod tests {
                 pricing_from(vars(&[("PRO_FLOOR_CENTS", bad)])).is_err(),
                 "{bad}"
             );
+        }
+    }
+
+    #[test]
+    fn configuration_smtp() {
+        assert!(
+            smtp_from(vars(&[])).expect("ok").is_none(),
+            "désactivé par défaut"
+        );
+
+        let smtp = smtp_from(vars(&[
+            ("SMTP_HOST", "smtp.exemple.fr"),
+            ("MAIL_FROM", "Lodestone <no-reply@exemple.fr>"),
+        ]))
+        .expect("ok")
+        .expect("configuré");
+        assert_eq!((smtp.port, smtp.security), (587, SmtpSecurity::StartTls));
+        assert_eq!(smtp.username, None);
+
+        let mailpit = smtp_from(vars(&[
+            ("SMTP_HOST", "localhost"),
+            ("SMTP_PORT", "1025"),
+            ("SMTP_SECURITY", "none"),
+            ("MAIL_FROM", "dev@lodestone.local"),
+        ]))
+        .expect("ok")
+        .expect("configuré");
+        assert_eq!((mailpit.port, mailpit.security), (1025, SmtpSecurity::None));
+
+        for bad in [
+            vec![("SMTP_HOST", "h")], // sans MAIL_FROM
+            vec![
+                ("SMTP_HOST", "h"),
+                ("MAIL_FROM", "a@b.fr"),
+                ("SMTP_USERNAME", "u"),
+            ], // sans mot de passe
+            vec![
+                ("SMTP_HOST", "h"),
+                ("MAIL_FROM", "a@b.fr"),
+                ("SMTP_SECURITY", "ssl"),
+            ],
+            vec![
+                ("SMTP_HOST", "h"),
+                ("MAIL_FROM", "a@b.fr"),
+                ("SMTP_PORT", "99999"),
+            ],
+        ] {
+            assert!(smtp_from(vars(&bad)).is_err(), "{bad:?}");
         }
     }
 

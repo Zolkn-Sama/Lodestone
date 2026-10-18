@@ -8,7 +8,8 @@ use crate::{
         auth_user::AuthUser,
         org_member::{Admin, OrgMember},
     },
-    services,
+    mail::{self, Email},
+    repositories, services,
     state::AppState,
 };
 
@@ -21,7 +22,7 @@ pub async fn create(
     body.validate()
         .map_err(|e| AppError::InvalidInput(e.to_string()))?;
 
-    let invitation = services::invitations::invite(
+    let mut invitation = services::invitations::invite(
         &state.db,
         member.org_id,
         member.user_id,
@@ -30,6 +31,29 @@ pub async fn create(
         body.role,
     )
     .await?;
+
+    if state.mailer.is_enabled() {
+        let org = services::organizations::get(&state.db, member.org_id).await?;
+        let inviter = repositories::users::find_by_id(&state.db, member.user_id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        mail::send_in_background(
+            state.mailer.clone(),
+            Email {
+                to: invitation.email.clone(),
+                subject: format!("Invitation à rejoindre {} sur Lodestone", org.name),
+                body: format!(
+                    "Bonjour,\n\n\
+                     {} vous invite à rejoindre l'organisation « {} » sur Lodestone.\n\n\
+                     Pour accepter, connectez-vous (ou créez votre compte) avec cette adresse \
+                     e-mail, puis ouvrez ce lien (valable 7 jours) :\n\n\
+                     {}/invitations/accept?token={}\n",
+                    inviter.email, org.name, state.config.app_base_url, invitation.token
+                ),
+            },
+        );
+        invitation.email_sent = true;
+    }
     Ok((StatusCode::CREATED, Json(invitation)))
 }
 

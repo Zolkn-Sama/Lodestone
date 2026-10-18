@@ -30,6 +30,14 @@ pub fn app_router(state: AppState) -> Router {
         .route("/api/auth/refresh", post(handlers::auth::refresh))
         .route("/api/auth/logout", post(handlers::auth::logout))
         .route(
+            "/api/auth/password/forgot",
+            post(handlers::auth::forgot_password),
+        )
+        .route(
+            "/api/auth/password/reset",
+            post(handlers::auth::reset_password),
+        )
+        .route(
             "/api/orgs",
             post(handlers::organizations::create).get(handlers::organizations::list_mine),
         )
