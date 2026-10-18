@@ -13,6 +13,8 @@ pub struct Subscription {
     pub current_period_end: Option<i64>,
     /// Bascule programmée à l'échéance.
     pub scheduled_interval: Option<String>,
+    /// `pro` | `sovereign`.
+    pub product: String,
 }
 
 fn from_row(row: sea_orm::QueryResult) -> Result<Subscription, DbErr> {
@@ -26,11 +28,12 @@ fn from_row(row: sea_orm::QueryResult) -> Result<Subscription, DbErr> {
         billing_interval: row.try_get("", "billing_interval")?,
         current_period_end: row.try_get("", "current_period_end")?,
         scheduled_interval: row.try_get("", "scheduled_interval")?,
+        product: row.try_get("", "product")?,
     })
 }
 
 const COLUMNS: &str = "org_id, stripe_subscription_id, status, seats, last_event_at, \
-     stripe_item_id, billing_interval, current_period_end, scheduled_interval";
+     stripe_item_id, billing_interval, current_period_end, scheduled_interval, product";
 
 /// L'abonnement de l'org, verrouillé jusqu'à la fin de la transaction.
 pub async fn find_by_org_for_update<C: ConnectionTrait>(
@@ -88,6 +91,8 @@ pub struct SubscriptionUpdate<'a> {
     pub item_id: Option<&'a str>,
     pub interval: Option<&'a str>,
     pub current_period_end: Option<i64>,
+    /// `pro` | `sovereign`.
+    pub product: &'a str,
     pub event_at: i64,
 }
 
@@ -98,8 +103,8 @@ pub async fn upsert<C: ConnectionTrait>(conn: &C, u: SubscriptionUpdate<'_>) -> 
         conn.get_database_backend(),
         "INSERT INTO subscriptions
             (org_id, stripe_subscription_id, stripe_customer_id, status, seats, last_event_at,
-             stripe_item_id, billing_interval, current_period_end)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             stripe_item_id, billing_interval, current_period_end, product)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (org_id) DO UPDATE SET
             stripe_subscription_id = EXCLUDED.stripe_subscription_id,
             stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, subscriptions.stripe_customer_id),
@@ -109,6 +114,7 @@ pub async fn upsert<C: ConnectionTrait>(conn: &C, u: SubscriptionUpdate<'_>) -> 
             stripe_item_id = COALESCE(EXCLUDED.stripe_item_id, subscriptions.stripe_item_id),
             billing_interval = COALESCE(EXCLUDED.billing_interval, subscriptions.billing_interval),
             current_period_end = COALESCE(EXCLUDED.current_period_end, subscriptions.current_period_end),
+            product = EXCLUDED.product,
             -- La bascule programmée a eu lieu : plus rien en attente.
             scheduled_interval = CASE
                 WHEN EXCLUDED.billing_interval = subscriptions.scheduled_interval THEN NULL
@@ -125,6 +131,7 @@ pub async fn upsert<C: ConnectionTrait>(conn: &C, u: SubscriptionUpdate<'_>) -> 
             u.item_id.map(str::to_string).into(),
             u.interval.map(str::to_string).into(),
             u.current_period_end.into(),
+            u.product.into(),
         ],
     ))
     .await?;
