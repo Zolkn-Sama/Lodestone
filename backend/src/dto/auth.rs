@@ -50,3 +50,11 @@ impl From<lodestone_entity::users::Model> for UserResponse {
         }
     }
 }
+
+/// Réponse de `/api/auth/me` : le profil (champs à plat) et les orgs.
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    #[serde(flatten)]
+    pub user: UserResponse,
+    pub organizations: Vec<crate::dto::organizations::MyOrgResponse>,
+}
