@@ -6,6 +6,7 @@ use lodestone_backend::events::Events;
 use lodestone_backend::router;
 use lodestone_backend::services::ingestion::EMBEDDING_DIMENSIONS;
 use lodestone_backend::state::AppState;
+use lodestone_billing::{PaymentProvider, StripeClient};
 use lodestone_llm::OpenAiCompatibleClient;
 use tokio::net::TcpListener;
 use tracing::info;
@@ -45,8 +46,21 @@ async fn main() -> anyhow::Result<()> {
     )?
     .with_chat_model(config.chat_model.clone());
 
+    // Facturation : seulement si Stripe est configuré.
+    let billing: Option<Arc<dyn PaymentProvider>> = match &config.stripe {
+        Some(stripe) => Some(Arc::new(StripeClient::new(
+            stripe.secret_key.clone(),
+            stripe.pro_price_id.clone(),
+        )?)),
+        None => {
+            info!("Stripe non configuré : facturation désactivée");
+            None
+        }
+    };
+
     // 5. État partagé + router.
     let state = AppState {
+        billing,
         db,
         config: Arc::new(config),
         llm: Arc::new(llm),
