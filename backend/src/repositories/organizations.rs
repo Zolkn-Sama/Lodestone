@@ -1,6 +1,7 @@
 use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, EntityTrait, Set};
 use uuid::Uuid;
 
+use lodestone_core::plan::Plan;
 use lodestone_entity::organizations;
 
 /// Générique sur `C: ConnectionTrait` -> accepte une connexion NORMALE
@@ -8,10 +9,12 @@ use lodestone_entity::organizations;
 pub async fn create<C: ConnectionTrait>(
     conn: &C,
     name: String,
+    plan: Plan,
 ) -> Result<organizations::Model, DbErr> {
     organizations::ActiveModel {
         id: Set(Uuid::new_v4()),
         name: Set(name),
+        plan: Set(plan.as_str().to_string()),
         ..Default::default()
     }
     .insert(conn)
@@ -44,4 +47,49 @@ pub async fn rename<C: ConnectionTrait>(
 pub async fn delete<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<bool, DbErr> {
     let res = organizations::Entity::delete_by_id(id).exec(conn).await?;
     Ok(res.rows_affected > 0)
+}
+
+/// Change le plan de l'org (Stripe le fera avec BILL-03).
+pub async fn set_plan<C: ConnectionTrait>(conn: &C, id: Uuid, plan: Plan) -> Result<(), DbErr> {
+    organizations::ActiveModel {
+        id: Set(id),
+        plan: Set(plan.as_str().to_string()),
+        ..Default::default()
+    }
+    .update(conn)
+    .await?;
+    Ok(())
+}
+
+/// Date de paiement de la mise en service Sovereign, si payée.
+pub async fn sovereign_setup_paid_at<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+) -> Result<Option<sea_orm::prelude::DateTimeWithTimeZone>, DbErr> {
+    let row = conn
+        .query_one(sea_orm::Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT sovereign_setup_paid_at FROM organizations WHERE id = $1",
+            [id.into()],
+        ))
+        .await?;
+    match row {
+        Some(row) => row.try_get("", "sovereign_setup_paid_at"),
+        None => Ok(None),
+    }
+}
+
+/// Enregistre le paiement de la mise en service (la première fois seulement).
+pub async fn mark_sovereign_setup_paid<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE organizations SET sovereign_setup_paid_at = now()
+         WHERE id = $1 AND sovereign_setup_paid_at IS NULL",
+        [id.into()],
+    ))
+    .await?;
+    Ok(())
 }

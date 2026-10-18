@@ -73,3 +73,57 @@ pub async fn delete<C: ConnectionTrait>(conn: &C, id: Uuid) -> Result<bool, DbEr
     let res = documents::Entity::delete_by_id(id).exec(conn).await?;
     Ok(res.rows_affected > 0)
 }
+
+/// Passe en `failed` les documents restés `pending` ou `processing` : leur
+/// ingestion a été interrompue (redémarrage du serveur) et le fichier n'est
+/// pas conservé, elle ne reprendra pas. Renvoie le nombre de documents touchés.
+pub async fn fail_interrupted<C: ConnectionTrait>(conn: &C) -> Result<u64, DbErr> {
+    let res = documents::Entity::update_many()
+        .col_expr(
+            documents::Column::Status,
+            sea_orm::sea_query::Expr::value(DocumentStatus::Failed.as_str()),
+        )
+        .filter(documents::Column::Status.is_in([
+            DocumentStatus::Pending.as_str(),
+            DocumentStatus::Processing.as_str(),
+        ]))
+        .exec(conn)
+        .await?;
+    Ok(res.rows_affected)
+}
+
+/// Note le modèle d'embedding qui a produit les fragments du document.
+pub async fn set_embedding_model<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+    model: &str,
+) -> Result<(), DbErr> {
+    conn.execute(sea_orm::Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE documents SET embedding_model = $1 WHERE id = $2",
+        [model.into(), id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Documents prêts dont le modèle d'embedding diffère de `model`, par modèle
+/// (`(inconnu)` pour ceux ingérés avant le suivi).
+pub async fn count_ready_by_other_embedding_model<C: ConnectionTrait>(
+    conn: &C,
+    model: &str,
+) -> Result<Vec<(String, i64)>, DbErr> {
+    let rows = conn
+        .query_all(sea_orm::Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT COALESCE(embedding_model, '(inconnu)') AS model, count(*) AS n
+             FROM documents
+             WHERE status = 'ready' AND embedding_model IS DISTINCT FROM $1
+             GROUP BY 1 ORDER BY 1",
+            [model.into()],
+        ))
+        .await?;
+    rows.into_iter()
+        .map(|r| Ok((r.try_get("", "model")?, r.try_get("", "n")?)))
+        .collect()
+}

@@ -1,13 +1,11 @@
-use axum::{Json, extract::State, response::IntoResponse};
-
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use validator::Validate;
 
-use crate::dto::auth::RefreshRequest;
-use axum::http::StatusCode;
-
 use crate::{
-    dto::auth::{LoginRequest, RegisterRequest},
+    dto::auth::{LoginRequest, MeResponse, RefreshRequest, RegisterRequest, UserResponse},
     error::AppError,
+    extractors::auth_user::AuthUser,
+    repositories::users,
     services,
     state::AppState,
 };
@@ -27,7 +25,7 @@ pub async fn register(
     )
     .await?;
 
-    Ok((axum::http::StatusCode::CREATED, Json(tokens)))
+    Ok((StatusCode::CREATED, Json(tokens)))
 }
 
 pub async fn login(
@@ -45,18 +43,21 @@ pub async fn login(
     Ok(Json(tokens))
 }
 
-use crate::{dto::auth::UserResponse, extractors::auth_user::AuthUser, repositories::users};
-
+/// GET /api/auth/me — profil + organisations de l'utilisateur (avec son rôle).
 pub async fn me(
     State(state): State<AppState>,
-    user: AuthUser, // <-- la magie : exige un token valide
+    user: AuthUser, // exige un token valide
 ) -> Result<impl IntoResponse, AppError> {
     // L'extracteur nous a donné l'id ; on recharge l'utilisateur frais depuis la base.
-    let user = users::find_by_id(&state.db, user.user_id)
+    let profile = users::find_by_id(&state.db, user.user_id)
         .await?
         .ok_or(AppError::Unauthorized)?; // token valide mais user supprimé -> 401
+    let organizations = services::organizations::list_for_user(&state.db, user.user_id).await?;
 
-    Ok(Json(UserResponse::from(user)))
+    Ok(Json(MeResponse {
+        user: UserResponse::from(profile),
+        organizations,
+    }))
 }
 
 pub async fn refresh(

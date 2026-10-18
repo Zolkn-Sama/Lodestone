@@ -20,7 +20,13 @@ pub async fn create(
     body.validate()
         .map_err(|e| AppError::InvalidInput(e.to_string()))?;
 
-    let org = services::organizations::create_org(&state.db, user.user_id, body.name).await?;
+    let org = services::organizations::create_org(
+        &state.db,
+        user.user_id,
+        body.name,
+        state.config.new_org_plan,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(OrgResponse::from(org))))
 }
 
@@ -62,4 +68,13 @@ pub async fn delete(
 ) -> Result<impl IntoResponse, AppError> {
     services::organizations::delete(&state.db, member.org_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// GET /api/orgs/{id}/usage — membre : plan, limites et consommation du mois.
+pub async fn usage(
+    State(state): State<AppState>,
+    member: OrgMember,
+) -> Result<impl IntoResponse, AppError> {
+    let usage = services::organizations::usage(&state.db, member.org_id).await?;
+    Ok(Json(usage))
 }

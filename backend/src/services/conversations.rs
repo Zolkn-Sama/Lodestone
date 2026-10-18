@@ -99,3 +99,68 @@ pub async fn delete(db: &DatabaseConnection, conversation_id: Uuid) -> Result<()
         Err(AppError::NotFound)
     }
 }
+
+/// Longueur maximale d'un titre déduit de la première question.
+const AUTO_TITLE_MAX_CHARS: usize = 60;
+
+/// Titre lisible tiré d'une question : espaces normalisés, coupé à
+/// `AUTO_TITLE_MAX_CHARS` sur une fin de mot, avec « … » si tronqué.
+pub fn title_from_question(question: &str) -> String {
+    let words: Vec<&str> = question.split_whitespace().collect();
+    let full = words.join(" ");
+    if full.chars().count() <= AUTO_TITLE_MAX_CHARS {
+        return full;
+    }
+
+    let mut title = String::new();
+    for word in &words {
+        let extra = usize::from(!title.is_empty()) + word.chars().count();
+        if title.chars().count() + extra > AUTO_TITLE_MAX_CHARS {
+            break;
+        }
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        title.push_str(word);
+    }
+    if title.is_empty() {
+        // Un seul « mot » géant : coupe brute.
+        title = full.chars().take(AUTO_TITLE_MAX_CHARS).collect();
+    }
+    title.push('…');
+    title
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn question_courte_gardee_telle_quelle() {
+        assert_eq!(
+            title_from_question("  Combien de jours\nde congés ?  "),
+            "Combien de jours de congés ?"
+        );
+    }
+
+    #[test]
+    fn question_longue_coupee_sur_un_mot() {
+        let question = "Quelle est la procédure exacte pour demander des congés payés pendant la période estivale ?";
+        let title = title_from_question(question);
+        assert!(title.ends_with('…'), "{title}");
+        assert!(title.chars().count() <= AUTO_TITLE_MAX_CHARS + 1);
+        let without_ellipsis = title.trim_end_matches('…');
+        assert!(
+            question.starts_with(without_ellipsis),
+            "coupé sur une fin de mot : {title}"
+        );
+        assert!(question[without_ellipsis.len()..].starts_with(' '));
+    }
+
+    #[test]
+    fn mot_geant() {
+        let title = title_from_question(&"é".repeat(200));
+        assert_eq!(title.chars().count(), AUTO_TITLE_MAX_CHARS + 1);
+        assert!(title.ends_with('…'));
+    }
+}

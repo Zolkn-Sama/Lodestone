@@ -178,6 +178,10 @@ impl LlmClient for MockLlmClient {
     fn embedding_dimensions(&self) -> usize {
         self.dimensions
     }
+
+    fn embedding_model(&self) -> &str {
+        "mock-embedding"
+    }
 }
 
 #[cfg(test)]

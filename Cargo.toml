@@ -7,6 +7,7 @@ members = [
     "crates/auth",
     "crates/llm",
     "crates/rag",
+    "crates/billing",
     "backend",
 ]
 
@@ -25,6 +26,7 @@ lodestone-migration = { path = "crates/migration" }
 lodestone-auth      = { path = "crates/auth" }
 lodestone-llm       = { path = "crates/llm" }
 lodestone-rag       = { path = "crates/rag" }
+lodestone-billing   = { path = "crates/billing" }
 
 # --- Framework web & runtime async ---
 axum = { version = "0.8.9", features = ["ws", "multipart", "macros"] }

@@ -1,0 +1,113 @@
+# =============================================================================
+# Lodestone — déploiement Sovereign auto-hébergé (production).
+#
+# Tout tourne sur l'infrastructure du client : base, modèles et serveur.
+# Aucun document, aucune question ne sort du réseau (pas de Stripe, pas d'API
+# externe). Guide complet : docs/deploiement-sovereign.md
+#
+#   cp deploy/sovereign/sovereign.env.example deploy/sovereign/.env
+#   # remplir les secrets, puis :
+#   docker compose -f deploy/sovereign/docker-compose.yml --env-file deploy/sovereign/.env up -d --build
+# =============================================================================
+name: lodestone-sovereign
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL + pgvector. Non exposé : seul le backend y accède.
+  # ---------------------------------------------------------------------------
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lodestone
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?définir POSTGRES_PASSWORD dans .env}
+      POSTGRES_DB: lodestone
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lodestone -d lodestone"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ---------------------------------------------------------------------------
+  # Ollama : embeddings + génération, en local. Non exposé.
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      # Fenêtre de contexte : le prompt RAG (~3 000 tokens d'extraits) doit tenir
+      # entier, sinon Ollama tronque le DÉBUT (les consignes) sans prévenir.
+      OLLAMA_CONTEXT_LENGTH: "8192"
+      # Garde les modèles en mémoire : pas de rechargement à chaque question.
+      OLLAMA_KEEP_ALIVE: "24h"
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    # GPU NVIDIA (fortement conseillé pour la génération) : décommenter.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ---------------------------------------------------------------------------
+  # Téléchargement des modèles au premier démarrage (puis sans effet).
+  # Serveur sans accès Internet : voir « Installation hors ligne » dans le guide.
+  # ---------------------------------------------------------------------------
+  ollama-models:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - ollama pull "${EMBEDDING_MODEL:-nomic-embed-text}" && ollama pull "${CHAT_MODEL:-llama3.1}"
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Serveur Lodestone. Applique les migrations au démarrage.
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: lodestone:${LODESTONE_VERSION:-local}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama-models:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://lodestone:${POSTGRES_PASSWORD}@db:5432/lodestone
+      JWT_SECRET: ${JWT_SECRET:?définir JWT_SECRET dans .env (au moins 32 caractères aléatoires)}
+      # Installation Sovereign : orgs sans quotas, aucune facturation.
+      NEW_ORG_PLAN: sovereign
+      # Modèles servis par l'Ollama local.
+      LLM_BASE_URL: http://ollama:11434/v1
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      CHAT_MODEL: ${CHAT_MODEL:-llama3.1}
+      # Le front (navigateur) et l'URL publique de l'application.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?définir CORS_ALLOWED_ORIGINS dans .env}
+      APP_BASE_URL: ${APP_BASE_URL:?définir APP_BASE_URL dans .env}
+      APP_PORT: "8090"
+      # Ne JAMAIS passer tower_http en debug : le token WebSocket (?token=)
+      # apparaîtrait dans les logs.
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      # À placer derrière le reverse proxy HTTPS du client (voir le guide).
+      - "${LODESTONE_BIND:-127.0.0.1}:${LODESTONE_PORT:-8090}:8090"
+
+volumes:
+  pgdata:
+  ollama:

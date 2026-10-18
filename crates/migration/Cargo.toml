@@ -7,3 +7,5 @@ publish = false
 [dependencies]
 sea-orm-migration = { workspace = true }
 tokio = { workspace = true }
+[lints]
+workspace = true

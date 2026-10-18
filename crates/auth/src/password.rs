@@ -38,19 +38,19 @@ mod tests {
 
     #[test]
     fn hash_puis_verifie() {
-        let hash = hash_password("motdepasse123").unwrap();
-        assert!(verify_password("motdepasse123", &hash).unwrap()); // bon mdp -> true
-        assert!(!verify_password("mauvais", &hash).unwrap()); // mauvais mdp -> false
+        let hash = hash_password("motdepasse123").expect("hachage");
+        assert!(verify_password("motdepasse123", &hash).expect("vérification")); // bon mdp -> true
+        assert!(!verify_password("mauvais", &hash).expect("vérification")); // mauvais mdp -> false
     }
 
     #[test]
     fn deux_hachages_different() {
         // Grâce au sel aléatoire, le même mot de passe donne deux hash différents...
-        let h1 = hash_password("meme").unwrap();
-        let h2 = hash_password("meme").unwrap();
+        let h1 = hash_password("meme").expect("hachage");
+        let h2 = hash_password("meme").expect("hachage");
         assert_ne!(h1, h2);
         // ...mais les deux se vérifient correctement.
-        assert!(verify_password("meme", &h1).unwrap());
-        assert!(verify_password("meme", &h2).unwrap());
+        assert!(verify_password("meme", &h1).expect("vérification"));
+        assert!(verify_password("meme", &h2).expect("vérification"));
     }
 }

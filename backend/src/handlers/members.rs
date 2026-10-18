@@ -30,6 +30,8 @@ pub async fn remove(
     Path((_, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, AppError> {
     services::members::remove(&state.db, member.org_id, member.role, user_id).await?;
+    // Un membre de moins : la quantité de l'abonnement Pro suit.
+    services::billing::spawn_seat_sync(state.db.clone(), state.billing.clone(), member.org_id);
     Ok(StatusCode::NO_CONTENT)
 }
 

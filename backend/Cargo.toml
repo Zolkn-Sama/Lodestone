@@ -17,6 +17,7 @@ lodestone-migration = { workspace = true }
 lodestone-auth      = { workspace = true }
 lodestone-llm       = { workspace = true }
 lodestone-rag       = { workspace = true }
+lodestone-billing   = { workspace = true }
 
 # --- Web / runtime ---
 tokio      = { workspace = true }
@@ -55,3 +56,5 @@ testcontainers-modules = { workspace = true }
 http-body-util         = { workspace = true }
 # Client WebSocket pour tester /ws (même version que celle qu'utilise axum).
 tokio-tungstenite      = "0.29.0"
+[lints]
+workspace = true

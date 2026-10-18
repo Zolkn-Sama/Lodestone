@@ -2073,6 +2073,7 @@ dependencies = [
  "futures",
  "http-body-util",
  "lodestone-auth",
+ "lodestone-billing",
  "lodestone-core",
  "lodestone-entity",
  "lodestone-llm",
@@ -2094,6 +2095,23 @@ dependencies = [
  "users",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "lodestone-billing"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "hex",
+ "hmac",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -3096,6 +3114,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

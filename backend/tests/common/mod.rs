@@ -20,10 +20,33 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use lodestone_backend::{
-    config::Config, events::Events, router::app_router, services::ingestion::EMBEDDING_DIMENSIONS,
+    config::{Config, SovereignPrices, StripeConfig},
+    events::Events,
+    router::app_router,
+    services::ingestion::EMBEDDING_DIMENSIONS,
     state::AppState,
 };
+use lodestone_billing::{MockPaymentProvider, PaymentProvider};
 use lodestone_llm::MockLlmClient;
+
+/// Secret des webhooks Stripe dans les tests.
+pub const WEBHOOK_SECRET: &str = "whsec_test";
+/// Prix Stripe Pro (mensuel, annuel) configurés dans les tests.
+pub const MONTHLY_PRICE: &str = "price_pro_test";
+pub const ANNUAL_PRICE: &str = "price_pro_annual_test";
+/// Prix Sovereign : licence annuelle et mise en service ponctuelle.
+pub const SOVEREIGN_LICENSE_PRICE: &str = "price_sovereign_license_test";
+pub const SOVEREIGN_SETUP_PRICE: &str = "price_sovereign_setup_test";
+
+/// Configuration de la facturation d'un serveur de test.
+enum Billing {
+    Disabled,
+    /// Installation auto-hébergée : pas de Stripe, orgs créées en Sovereign.
+    SelfHosted,
+    /// Stripe configuré, sans prix annuel.
+    MonthlyOnly,
+    Enabled(MockPaymentProvider),
+}
 use lodestone_migration::{Migrator, MigratorTrait};
 
 pub struct TestApp {
@@ -33,6 +56,8 @@ pub struct TestApp {
     pub llm: Arc<MockLlmClient>,
     /// Le même bus que celui de l'`AppState`.
     pub events: Events,
+    /// Le fournisseur de paiement de l'`AppState` (facturation active par défaut).
+    pub billing: Arc<MockPaymentProvider>,
     // Gardé en vie tant que le test tourne ; le conteneur est supprimé au drop.
     _pg: ContainerAsync<Postgres>,
 }
@@ -52,6 +77,42 @@ impl TestApp {
 
     /// Comme `spawn`, avec un mock configuré (réponse, lenteur, pannes…).
     pub async fn spawn_with_llm(llm: MockLlmClient) -> Self {
+        Self::spawn_full(llm, Billing::Enabled(MockPaymentProvider::new())).await
+    }
+
+    /// Serveur sans Stripe configuré : la facturation répond 503.
+    pub async fn spawn_without_billing() -> Self {
+        Self::spawn_full(MockLlmClient::new(EMBEDDING_DIMENSIONS), Billing::Disabled).await
+    }
+
+    /// Installation Sovereign auto-hébergée (NEW_ORG_PLAN=sovereign, sans Stripe).
+    pub async fn spawn_self_hosted() -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::SelfHosted,
+        )
+        .await
+    }
+
+    /// Stripe configuré sans prix annuel : seul le mensuel est proposé.
+    pub async fn spawn_without_annual() -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::MonthlyOnly,
+        )
+        .await
+    }
+
+    /// Facturation active avec un fournisseur configuré (ex. en panne).
+    pub async fn spawn_with_billing(provider: MockPaymentProvider) -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::Enabled(provider),
+        )
+        .await
+    }
+
+    async fn spawn_full(llm: MockLlmClient, billing_mode: Billing) -> Self {
         // Même image que docker-compose : pgvector sera là quand le RAG arrivera.
         let pg = Postgres::default()
             .with_name("pgvector/pgvector")
@@ -67,11 +128,36 @@ impl TestApp {
 
         let llm = Arc::new(llm);
         let events = Events::default();
+        let mut config = Config::new(url, "secret-de-test".into());
+        config.app_base_url = "https://app.test".into();
+        let annual_offered = !matches!(billing_mode, Billing::MonthlyOnly);
+        if matches!(billing_mode, Billing::SelfHosted) {
+            config.new_org_plan = lodestone_core::plan::Plan::Sovereign;
+        }
+        let (billing, billing_enabled) = match billing_mode {
+            Billing::Disabled | Billing::SelfHosted => (MockPaymentProvider::new(), false),
+            Billing::MonthlyOnly => (MockPaymentProvider::new(), true),
+            Billing::Enabled(provider) => (provider, true),
+        };
+        let billing = Arc::new(billing);
+        if billing_enabled {
+            config.stripe = Some(StripeConfig {
+                secret_key: "sk_test".into(),
+                webhook_secret: WEBHOOK_SECRET.into(),
+                pro_price_id: MONTHLY_PRICE.into(),
+                pro_annual_price_id: annual_offered.then(|| ANNUAL_PRICE.into()),
+                sovereign_prices: Some(SovereignPrices {
+                    license_price_id: SOVEREIGN_LICENSE_PRICE.into(),
+                    setup_price_id: SOVEREIGN_SETUP_PRICE.into(),
+                }),
+            });
+        }
         let state = AppState {
             db: db.clone(),
-            config: Arc::new(Config::new(url, "secret-de-test".into())),
+            config: Arc::new(config),
             llm: llm.clone(),
             events: events.clone(),
+            billing: billing_enabled.then(|| billing.clone() as Arc<dyn PaymentProvider>),
         };
 
         Self {
@@ -79,6 +165,7 @@ impl TestApp {
             db,
             llm,
             events,
+            billing,
             _pg: pg,
         }
     }
@@ -187,6 +274,32 @@ impl TestApp {
         let router = self.router.clone();
         tokio::spawn(async move { axum::serve(listener, router).await });
         addr
+    }
+
+    /// Envoie une requête construite à la main (en-têtes libres, ex. CORS).
+    pub async fn send(&self, req: Request<Body>) -> axum::response::Response {
+        self.router.clone().oneshot(req).await.expect("réponse")
+    }
+
+    /// Envoie un événement Stripe signé (comme Stripe le ferait) au webhook.
+    pub async fn send_webhook(&self, event: &Value) -> (StatusCode, Value) {
+        let body = event.to_string().into_bytes();
+        let signature =
+            lodestone_billing::sign_payload(&body, WEBHOOK_SECRET, chrono::Utc::now().timestamp());
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/api/billing/webhook")
+            .header("stripe-signature", signature)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("requête");
+        let res = self.send(req).await;
+        let status = res.status();
+        let bytes = res.into_body().collect().await.expect("corps").to_bytes();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     pub async fn get(&self, uri: &str, token: &str) -> (StatusCode, Value) {

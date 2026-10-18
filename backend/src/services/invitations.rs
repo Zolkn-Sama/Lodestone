@@ -6,6 +6,7 @@ use crate::{
     dto::{invitations::InvitationCreatedResponse, organizations::MyOrgResponse},
     error::AppError,
     repositories::{self, invitations::NewInvitation},
+    services::quotas,
 };
 use lodestone_auth::refresh;
 use lodestone_core::role::Role;
@@ -43,6 +44,8 @@ pub async fn invite(
     }
 
     repositories::invitations::delete_pending(&txn, org_id, &email).await?;
+    // Après le remplacement : ré-inviter quelqu'un ne consomme pas de siège en plus.
+    quotas::ensure_can_invite(&txn, org_id).await?;
 
     // Le jeton en clair part au client ; seul son hash est stocké.
     let token = refresh::generate_opaque_token();
@@ -105,6 +108,8 @@ pub async fn accept(
 
     let role: Role = invitation.role.parse().map_err(|_| AppError::Internal)?;
     let org_id = invitation.org_id;
+    // Utile si l'org est repassée en Free entre l'invitation et l'acceptation.
+    quotas::ensure_can_join(&txn, org_id).await?;
     repositories::memberships::create(&txn, user_id, org_id, role).await?;
     repositories::invitations::mark_accepted(&txn, invitation).await?;
     let org = repositories::organizations::find_by_id(&txn, org_id)

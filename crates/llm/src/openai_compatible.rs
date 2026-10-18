@@ -46,6 +46,17 @@ fn prefixes_for(model: &str) -> (&'static str, &'static str) {
 struct EmbeddingRequest<'a> {
     model: &'a str,
     input: &'a [String],
+    /// Taille demandée : seulement pour les modèles qui la réduisent sur demande.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<usize>,
+}
+
+/// Les modèles OpenAI `text-embedding-3-*` produisent 1536 (ou 3072)
+/// dimensions par défaut mais savent les réduire : on demande celles de la
+/// base (768), ce qui rend la bascule Ollama -> OpenAI possible sans migration.
+/// Les autres (nomic-embed-text…) ont une taille fixe : on n'envoie rien.
+fn requested_dimensions(model: &str, dimensions: usize) -> Option<usize> {
+    model.starts_with("text-embedding-3").then_some(dimensions)
 }
 
 #[derive(Deserialize)]
@@ -152,6 +163,7 @@ impl LlmClient for OpenAiCompatibleClient {
             .json(&EmbeddingRequest {
                 model: &self.embedding_model,
                 input: texts,
+                dimensions: requested_dimensions(&self.embedding_model, self.embedding_dimensions),
             })
             .send()
             .await
@@ -190,6 +202,10 @@ impl LlmClient for OpenAiCompatibleClient {
 
     fn embedding_dimensions(&self) -> usize {
         self.embedding_dimensions
+    }
+
+    fn embedding_model(&self) -> &str {
+        &self.embedding_model
     }
 
     fn document_prefix(&self) -> &str {
@@ -366,6 +382,26 @@ mod tests {
         assert_eq!(auth, &None, "pas de clé -> pas d'en-tête Authorization");
         assert_eq!(body["model"], "nomic-embed-text");
         assert_eq!(body["input"], json!(["texte 0", "texte 1", "texte 2"]));
+    }
+
+    #[tokio::test]
+    async fn dimensions_demandees_aux_modeles_openai_reductibles() {
+        let (url, seen) = fake_server(reply_ok).await;
+        for model in [
+            "text-embedding-3-small",
+            "text-embedding-3-large",
+            "nomic-embed-text",
+        ] {
+            let client = OpenAiCompatibleClient::new(url.clone(), None, model, 3).expect("client");
+            client.embed(&texts(1)).await.expect("embed");
+        }
+        let seen = seen.lock().expect("lock");
+        let dims: Vec<Value> = seen.iter().map(|(_, b)| b["dimensions"].clone()).collect();
+        assert_eq!(dims, vec![json!(3), json!(3), Value::Null]);
+        assert!(
+            seen[2].1.get("dimensions").is_none(),
+            "champ absent pour nomic"
+        );
     }
 
     #[tokio::test]

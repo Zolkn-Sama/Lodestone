@@ -16,6 +16,10 @@ use crate::{
         chunks::RetrievedChunk,
         messages::{MessageRole, NewMessage},
     },
+    services::{
+        conversations as conversations_service,
+        quotas::{self, QuotaError, QuotaExceeded},
+    },
     ws::protocol::{Citation, ServerMsg},
 };
 use lodestone_entity::conversations;
@@ -44,6 +48,9 @@ pub enum ChatError {
 
     #[error("question trop longue ({MAX_QUESTION_CHARS} caractères maximum)")]
     QuestionTooLong,
+
+    #[error("{}", .0.message())]
+    Quota(QuotaExceeded),
 
     #[error(transparent)]
     Llm(#[from] LlmError),
@@ -95,6 +102,14 @@ pub async fn retrieve(
     repositories::memberships::find(db, user_id, conversation.org_id)
         .await?
         .ok_or(ChatError::ConversationNotFound)?;
+
+    // Quota de questions vérifié avant tout appel au modèle.
+    quotas::ensure_can_ask(db, conversation.org_id)
+        .await
+        .map_err(|e| match e {
+            QuotaError::Exceeded(q) => ChatError::Quota(q),
+            QuotaError::Database(e) => ChatError::Database(e),
+        })?;
 
     let embedding = llm.embed_query(question).await?;
     let chunks = repositories::chunks::search(db, conversation.org_id, embedding, TOP_K).await?;
@@ -167,7 +182,9 @@ pub async fn answer(
 
     // Identifiant du message de l'assistant, annoncé dans `done`.
     let message_id = Uuid::new_v4();
+    let org_id = retrieval.conversation.org_id;
     let exchange = |answer: String| Exchange {
+        org_id,
         conversation_id,
         question: question.trim().to_string(),
         asked_at,
@@ -230,6 +247,7 @@ pub async fn answer(
 
 /// Un échange question/réponse terminé, prêt à être enregistré.
 struct Exchange {
+    org_id: Uuid,
     conversation_id: Uuid,
     question: String,
     asked_at: DateTime<Utc>,
@@ -253,9 +271,17 @@ async fn finish(db: &DatabaseConnection, exchange: Exchange) -> ServerMsg {
     }
 }
 
-/// Question + réponse + sources, tout ou rien.
+/// Titre éventuel + question + réponse + sources + compteur, tout ou rien.
 async fn save_exchange(db: &DatabaseConnection, exchange: Exchange) -> Result<(), DbErr> {
     let txn = db.begin().await?;
+    // Première question d'une conversation sans titre choisi : elle devient le titre.
+    repositories::conversations::rename_if_title_is(
+        &txn,
+        exchange.conversation_id,
+        conversations_service::DEFAULT_TITLE,
+        conversations_service::title_from_question(&exchange.question),
+    )
+    .await?;
     repositories::messages::create(
         &txn,
         NewMessage {
@@ -279,6 +305,8 @@ async fn save_exchange(db: &DatabaseConnection, exchange: Exchange) -> Result<()
     )
     .await?;
     repositories::messages::add_sources(&txn, exchange.message_id, &exchange.sources).await?;
+    // Compté seulement ici : une question qui n'a pas abouti ne consomme rien.
+    repositories::usage::increment_questions(&txn, exchange.org_id).await?;
     txn.commit().await
 }
 

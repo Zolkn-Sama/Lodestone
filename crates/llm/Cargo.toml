@@ -17,3 +17,6 @@ tokio       = { workspace = true }
 [dev-dependencies]
 # Faux serveur OpenAI-compatible pour tester le client sans Ollama.
 axum  = { workspace = true }
+
+[lints]
+workspace = true
