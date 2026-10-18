@@ -45,7 +45,8 @@ Remplir `deploy/sovereign/.env` :
   passe est inséré dans une URL de connexion) ;
 - `JWT_SECRET` : `openssl rand -hex 48` ;
 - `APP_BASE_URL` et `CORS_ALLOWED_ORIGINS` : l'URL publique du front, par exemple
-  `https://lodestone.mon-entreprise.local`.
+  `https://lodestone.mon-entreprise.local` ;
+- `SMTP_*` et `MAIL_FROM` : le serveur de messagerie interne (voir § 3 bis).
 
 Démarrer :
 
@@ -112,6 +113,7 @@ server {
         proxy_pass http://127.0.0.1:8090;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 ```
@@ -119,6 +121,48 @@ server {
 > **Ne pas journaliser les URLs de `/ws`** dans le reverse proxy : le jeton
 > d'accès y passe en paramètre (`/ws?token=…`). Pour la même raison, garder
 > `RUST_LOG=info` côté serveur (jamais `tower_http=debug`).
+
+---
+
+### X-Forwarded-For et limitation des tentatives
+
+Lodestone limite les tentatives de connexion (5 échecs par 15 min pour un même
+compte depuis une même IP, plafonds par IP pour la connexion et l'inscription).
+Derrière le proxy, toutes les connexions viennent du proxy : le compose fixe donc
+`TRUST_PROXY_HEADERS=true`, et Lodestone lit l'IP réelle dans `X-Forwarded-For`.
+Le proxy doit **ajouter** cette adresse :
+
+```nginx
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+Lodestone retient la **dernière** adresse de l'en-tête (celle écrite par le
+proxy) : celles envoyées par le navigateur, falsifiables, sont ignorées. Si le
+serveur n'est PAS derrière un proxy, laisser `TRUST_PROXY_HEADERS` à `false`.
+
+---
+
+## 3 bis. E-mails
+
+Les e-mails servent aux **invitations** et au **mot de passe oublié** (lien à
+usage unique, valable 1 heure, qui déconnecte toutes les sessions une fois utilisé).
+
+| Variable | Exemple | Rôle |
+|---|---|---|
+| `SMTP_HOST` | `smtp.mon-entreprise.local` | Serveur SMTP (vide : aucun e-mail) |
+| `SMTP_SECURITY` | `starttls` | `starttls` (587), `tls` (465) ou `none` (relais local) |
+| `SMTP_PORT` | `587` | Défaut selon `SMTP_SECURITY` |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | | Authentification (les deux ou aucun) |
+| `MAIL_FROM` | `Lodestone <no-reply@mon-entreprise.local>` | Expéditeur |
+
+Les certificats du serveur SMTP sont vérifiés avec les **autorités du système** :
+une autorité interne au client doit être ajoutée au magasin de certificats de
+l'image (ou de l'hôte).
+
+Sans SMTP, aucun e-mail ne part : l'administrateur transmet les liens
+d'invitation à la main (ils sont renvoyés par l'API), mais **un mot de passe
+oublié ne peut pas être réinitialisé**. Le contenu des e-mails n'est jamais écrit
+dans les logs (il contient des liens à usage unique).
 
 ---
 
@@ -234,6 +278,8 @@ instances), mettre `RUN_MIGRATIONS=false` sur les serveurs.
 | `APP_BASE_URL` | `http://localhost:3000` | URL publique du front |
 | `APP_PORT` | `8090` | Port d'écoute |
 | `RUN_MIGRATIONS` | `true` | Migrations au démarrage |
+| `TRUST_PROXY_HEADERS` | `false` | Lire l'IP du client dans `X-Forwarded-For` (derrière un proxy) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM` | (vide) | E-mails (§ 3 bis) |
 | `RUST_LOG` | `info` | Niveau de logs |
 
 Variables de facturation (`STRIPE_*`, `PRO_*`, `SOVEREIGN_*`) : sans objet pour une
