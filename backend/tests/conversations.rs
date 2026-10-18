@@ -306,6 +306,14 @@ async fn historique_personnel_trie_par_activite() {
     let outsider = app.register("outsider").await;
     let org = app.create_org(&alice).await;
     app.add_member(org, &alice, &bob, "member").await;
+    // Une seule org Free par utilisateur : la première passe en Pro.
+    lodestone_backend::repositories::organizations::set_plan(
+        &app.db,
+        org,
+        lodestone_core::plan::Plan::Pro,
+    )
+    .await
+    .expect("plan Pro");
     let other_org = app.create_org(&alice).await;
     let uri = format!("/api/orgs/{org}/conversations");
 

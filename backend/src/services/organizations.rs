@@ -5,6 +5,7 @@ use crate::{
     dto::organizations::{MyOrgResponse, Quota, UsageResponse, plan_of},
     error::AppError,
     repositories,
+    services::quotas,
 };
 use lodestone_core::role::{self, Role};
 use lodestone_entity::organizations;
@@ -18,6 +19,8 @@ pub async fn create_org(
     // On ouvre une transaction : tout ce qui suit réussit ensemble ou est annulé.
     let txn = db.begin().await?;
 
+    // Toute nouvelle org est en Free : une seule par utilisateur.
+    quotas::ensure_can_create_org(&txn, creator_id).await?;
     let org = repositories::organizations::create(&txn, name).await?;
     repositories::memberships::create(&txn, creator_id, org.id, role::Role::Owner).await?;
 

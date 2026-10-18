@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use common::{TestApp, TestUser};
+use lodestone_backend::repositories::organizations;
+use lodestone_core::plan::Plan;
 
 #[derive(Clone, Copy, Debug)]
 enum Actor {
@@ -47,8 +49,13 @@ impl Users {
 }
 
 /// Une org neuve avec un owner, un admin et un member.
+/// L'org passe en Pro : ces tests portent sur les rôles, et le même owner
+/// crée une org par cas (le plan Free limite à une org par utilisateur).
 async fn seed_org(app: &TestApp, users: &Users) -> Uuid {
     let org = app.create_org(&users.owner).await;
+    organizations::set_plan(&app.db, org, Plan::Pro)
+        .await
+        .expect("plan Pro");
     app.add_member(org, &users.owner, &users.admin, "admin")
         .await;
     app.add_member(org, &users.owner, &users.member, "member")

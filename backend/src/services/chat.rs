@@ -16,7 +16,10 @@ use crate::{
         chunks::RetrievedChunk,
         messages::{MessageRole, NewMessage},
     },
-    services::conversations as conversations_service,
+    services::{
+        conversations as conversations_service,
+        quotas::{self, QuotaError, QuotaExceeded},
+    },
     ws::protocol::{Citation, ServerMsg},
 };
 use lodestone_entity::conversations;
@@ -45,6 +48,9 @@ pub enum ChatError {
 
     #[error("question trop longue ({MAX_QUESTION_CHARS} caractères maximum)")]
     QuestionTooLong,
+
+    #[error("{}", .0.message())]
+    Quota(QuotaExceeded),
 
     #[error(transparent)]
     Llm(#[from] LlmError),
@@ -96,6 +102,14 @@ pub async fn retrieve(
     repositories::memberships::find(db, user_id, conversation.org_id)
         .await?
         .ok_or(ChatError::ConversationNotFound)?;
+
+    // Quota de questions vérifié avant tout appel au modèle.
+    quotas::ensure_can_ask(db, conversation.org_id)
+        .await
+        .map_err(|e| match e {
+            QuotaError::Exceeded(q) => ChatError::Quota(q),
+            QuotaError::Database(e) => ChatError::Database(e),
+        })?;
 
     let embedding = llm.embed_query(question).await?;
     let chunks = repositories::chunks::search(db, conversation.org_id, embedding, TOP_K).await?;
