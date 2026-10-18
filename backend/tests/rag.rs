@@ -44,13 +44,25 @@ async fn new_conversation(app: &TestApp, org: Uuid, user: &TestUser) -> Uuid {
     body["id"].as_str().expect("id").parse().expect("uuid")
 }
 
+/// Pose la question et renvoie le premier message (`sources` ou `error`),
+/// après avoir lu la suite de l'échange (`token`… jusqu'à `done` ou `error`)
+/// pour ne pas polluer la question suivante.
 async fn ask(socket: &mut WsSocket, conversation: Uuid, question: &str) -> Value {
     ws_send(
         socket,
         json!({ "type": "ask", "conversation_id": conversation, "question": question }),
     )
     .await;
-    ws_recv(socket).await
+    let first = ws_recv(socket).await;
+    if first["type"] == "sources" {
+        loop {
+            let next = ws_recv(socket).await;
+            if next["type"] == "done" || next["type"] == "error" {
+                break;
+            }
+        }
+    }
+    first
 }
 
 fn cited_documents(reply: &Value) -> Vec<String> {
