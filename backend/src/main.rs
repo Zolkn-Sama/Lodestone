@@ -34,13 +34,14 @@ async fn main() -> anyhow::Result<()> {
         .sqlx_logging(false);
     let db = Database::connect(opt).await?;
 
-    // 4. Client LLM (embeddings) : Ollama par défaut, OpenAI si LLM_API_KEY est fourni.
+    // 4. Client LLM (embeddings + génération) : Ollama par défaut, OpenAI si LLM_API_KEY est fourni.
     let llm = OpenAiCompatibleClient::new(
         config.llm_base_url.clone(),
         config.llm_api_key.clone(),
         config.embedding_model.clone(),
         EMBEDDING_DIMENSIONS,
-    )?;
+    )?
+    .with_chat_model(config.chat_model.clone());
 
     // 5. État partagé + router.
     let state = AppState {

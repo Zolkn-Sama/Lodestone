@@ -11,9 +11,12 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
-use tokio::sync::{
-    broadcast::{self, error::RecvError},
-    mpsc,
+use tokio::{
+    sync::{
+        broadcast::{self, error::RecvError},
+        mpsc,
+    },
+    task::JoinHandle,
 };
 use uuid::Uuid;
 
@@ -22,7 +25,7 @@ use lodestone_auth::jwt::decode_access_token;
 use crate::{
     error::AppError,
     events::OrgEvent,
-    repositories,
+    repositories, services,
     state::AppState,
     ws::protocol::{ClientMsg, ServerMsg},
 };
@@ -114,10 +117,38 @@ async fn handle_socket(
         outbox.clone(),
     ));
 
+    // La question en cours : une seule à la fois par connexion.
+    let mut current: Option<JoinHandle<()>> = None;
+
     while let Some(frame) = stream.next().await {
         let reply = match frame {
             Ok(Message::Text(text)) => match serde_json::from_str::<ClientMsg>(&text) {
-                Ok(msg) => handle_message(msg).await,
+                Ok(ClientMsg::Ping) => Some(ServerMsg::Pong),
+                Ok(ClientMsg::Ask {
+                    conversation_id,
+                    question,
+                }) => {
+                    if current.as_ref().is_some_and(|task| !task.is_finished()) {
+                        Some(error("une question est déjà en cours de traitement"))
+                    } else {
+                        // Tâche à part : la connexion reste réactive (ping,
+                        // fermeture) pendant la génération.
+                        let state = state.clone();
+                        let outbox = outbox.clone();
+                        current = Some(tokio::spawn(async move {
+                            services::chat::answer(
+                                &state.db,
+                                state.llm.as_ref(),
+                                user_id,
+                                conversation_id,
+                                &question,
+                                &outbox,
+                            )
+                            .await;
+                        }));
+                        None
+                    }
+                }
                 Err(e) => Some(error(format!("message invalide : {e}"))),
             },
             Ok(Message::Binary(_)) => Some(error("seuls les messages texte (JSON) sont acceptés")),
@@ -132,6 +163,11 @@ async fn handle_socket(
         }
     }
 
+    // Client parti : on interrompt la génération en cours (et l'appel au modèle).
+    if let Some(task) = current {
+        task.abort();
+        let _ = task.await;
+    }
     notifier.abort();
     let _ = notifier.await; // libère sa copie du canal
     drop(outbox); // ferme le canal : l'écrivain termine et ferme la socket
@@ -166,14 +202,6 @@ async fn forward_org_events(
             Ok(None) => {} // pas membre de cette org
             Err(e) => tracing::error!(error = %e, "vérification d'appartenance impossible"),
         }
-    }
-}
-
-async fn handle_message(msg: ClientMsg) -> Option<ServerMsg> {
-    match msg {
-        ClientMsg::Ping => Some(ServerMsg::Pong),
-        // Branché sur le pipeline RAG avec RAG-01.
-        ClientMsg::Ask { .. } => Some(error("les questions ne sont pas encore disponibles")),
     }
 }
 

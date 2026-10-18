@@ -92,7 +92,7 @@ async fn messages_invalides_sans_couper_la_connexion() {
 }
 
 #[tokio::test]
-async fn ask_pas_encore_disponible() {
+async fn ask_sur_conversation_inconnue() {
     let app = TestApp::spawn().await;
     let addr = app.serve().await;
     let user = app.register("user").await;
@@ -107,7 +107,9 @@ async fn ask_pas_encore_disponible() {
         }),
     )
     .await;
-    assert_eq!(recv(&mut socket).await["type"], "error");
+    let reply = recv(&mut socket).await;
+    assert_eq!(reply["type"], "error");
+    assert_eq!(reply["message"], "conversation introuvable");
 }
 
 #[tokio::test]
