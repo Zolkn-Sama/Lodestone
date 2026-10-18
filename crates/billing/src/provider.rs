@@ -7,6 +7,8 @@ use crate::error::BillingError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutRequest {
     pub org_id: Uuid,
+    /// Prix choisi (`price_…`) : mensuel ou annuel.
+    pub price_id: String,
     /// Sièges facturés (quantité de l'abonnement).
     pub seats: u32,
     /// Email pré-rempli sur la page de paiement.
@@ -42,7 +44,8 @@ pub struct PriceInfo {
     pub tiers: Vec<PriceTier>,
 }
 
-/// Fournisseur de paiement (Stripe en vrai, mock en test).
+/// Fournisseur de paiement (Stripe en vrai, mock en test). Les identifiants de
+/// prix viennent de la configuration de la plateforme, à chaque appel.
 #[async_trait]
 pub trait PaymentProvider: Send + Sync {
     async fn create_checkout(
@@ -57,6 +60,26 @@ pub trait PaymentProvider: Send + Sync {
         seats: u32,
     ) -> Result<(), BillingError>;
 
-    /// Le prix Pro configuré chez le fournisseur (vérification au démarrage).
-    async fn pro_price(&self) -> Result<PriceInfo, BillingError>;
+    /// Change le prix d'un abonnement TOUT DE SUITE (mensuel -> annuel) :
+    /// la période en cours est créditée au prorata, la nouvelle facturée aussitôt.
+    async fn change_price_now(
+        &self,
+        subscription_item_id: &str,
+        price_id: &str,
+        seats: u32,
+    ) -> Result<(), BillingError>;
+
+    /// Programme le passage à `to_price_id` À LA FIN de la période en cours
+    /// (annuel -> mensuel), sans prorata ni remboursement. Renvoie la date de
+    /// bascule (horodatage Unix).
+    async fn schedule_price_change(
+        &self,
+        subscription_id: &str,
+        from_price_id: &str,
+        to_price_id: &str,
+        seats: u32,
+    ) -> Result<i64, BillingError>;
+
+    /// Un prix configuré chez le fournisseur (vérification au démarrage).
+    async fn price(&self, price_id: &str) -> Result<PriceInfo, BillingError>;
 }

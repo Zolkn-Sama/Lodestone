@@ -48,19 +48,17 @@ async fn main() -> anyhow::Result<()> {
 
     // Facturation : seulement si Stripe est configuré.
     let billing: Option<Arc<dyn PaymentProvider>> = match &config.stripe {
-        Some(stripe) => Some(Arc::new(StripeClient::new(
-            stripe.secret_key.clone(),
-            stripe.pro_price_id.clone(),
-        )?)),
+        Some(stripe) => Some(Arc::new(StripeClient::new(stripe.secret_key.clone())?)),
         None => {
             info!("Stripe non configuré : facturation désactivée");
             None
         }
     };
-    if let Some(provider) = &billing {
-        // Le prix configuré chez Stripe doit correspondre au tarif de la plateforme.
-        lodestone_backend::services::billing::verify_stripe_price(
+    if let (Some(provider), Some(stripe)) = (&billing, &config.stripe) {
+        // Les prix configurés chez Stripe doivent correspondre au tarif de la plateforme.
+        lodestone_backend::services::billing::verify_stripe_prices(
             provider.as_ref(),
+            stripe,
             config.pro_pricing,
         )
         .await;

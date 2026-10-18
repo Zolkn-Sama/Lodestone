@@ -45,6 +45,10 @@ pub fn app_router(state: AppState) -> Router {
             "/api/orgs/{id}/billing/checkout",
             post(handlers::billing::checkout),
         )
+        .route(
+            "/api/orgs/{id}/billing/interval",
+            post(handlers::billing::change_interval),
+        )
         .route("/api/billing/webhook", post(handlers::billing::webhook))
         .route("/api/orgs/{id}/members", get(handlers::members::list))
         .route(

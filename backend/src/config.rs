@@ -29,8 +29,10 @@ pub struct Config {
 pub struct StripeConfig {
     pub secret_key: String,
     pub webhook_secret: String,
-    /// Prix Stripe de l'abonnement Pro par siège (`price_…`).
+    /// Prix Stripe de l'abonnement Pro mensuel par siège (`price_…`).
     pub pro_price_id: String,
+    /// Prix annuel (avec remise) ; `None` : seul le mensuel est proposé.
+    pub pro_annual_price_id: Option<String>,
 }
 
 impl Config {
@@ -115,8 +117,14 @@ fn stripe_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<St
             secret_key,
             webhook_secret,
             pro_price_id,
+            pro_annual_price_id: get("STRIPE_PRICE_PRO_ANNUAL"),
         })),
-        (None, None, None) => Ok(None),
+        (None, None, None) => {
+            if get("STRIPE_PRICE_PRO_ANNUAL").is_some() {
+                anyhow::bail!("STRIPE_PRICE_PRO_ANNUAL sans le reste de la configuration Stripe");
+            }
+            Ok(None)
+        }
         _ => anyhow::bail!(
             "configuration Stripe incomplète : STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET et STRIPE_PRICE_PRO vont ensemble"
         ),
@@ -139,9 +147,23 @@ fn pricing_from(var: impl Fn(&str) -> Option<String>) -> anyhow::Result<ProPrici
                 }),
         }
     };
+    let discount = match var("PRO_ANNUAL_DISCOUNT_PERCENT").filter(|v| !v.trim().is_empty()) {
+        None => default.annual_discount_percent,
+        Some(v) => v
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n < 100)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "PRO_ANNUAL_DISCOUNT_PERCENT : entier de 0 à 99 attendu, reçu « {v} »"
+                )
+            })?,
+    };
     Ok(ProPricing {
         seat_price_cents: read("PRO_SEAT_PRICE_CENTS", default.seat_price_cents)?,
         floor_cents: read("PRO_FLOOR_CENTS", default.floor_cents)?,
+        annual_discount_percent: discount,
     })
 }
 
@@ -198,6 +220,14 @@ mod tests {
         ]))
         .expect("valide");
         assert_eq!((p.seat_price_cents, p.floor_cents), (2500, 9900));
+        let p = pricing_from(vars(&[("PRO_ANNUAL_DISCOUNT_PERCENT", "0")])).expect("0 % autorisé");
+        assert_eq!(p.annual_discount_percent, 0);
+        for bad in ["100", "-5", "15.5"] {
+            assert!(
+                pricing_from(vars(&[("PRO_ANNUAL_DISCOUNT_PERCENT", bad)])).is_err(),
+                "remise {bad}"
+            );
+        }
         for bad in ["0", "-1", "29.00", "abc"] {
             assert!(
                 pricing_from(vars(&[("PRO_FLOOR_CENTS", bad)])).is_err(),
@@ -216,6 +246,17 @@ mod tests {
         let stripe = stripe_from(vars(&complete))
             .expect("ok")
             .expect("configuré");
+        assert_eq!(stripe.pro_annual_price_id, None, "annuel facultatif");
+        let mut with_annual = complete.to_vec();
+        with_annual.push(("STRIPE_PRICE_PRO_ANNUAL", "price_year"));
+        let stripe = stripe_from(vars(&with_annual))
+            .expect("ok")
+            .expect("configuré");
+        assert_eq!(stripe.pro_annual_price_id.as_deref(), Some("price_year"));
+        assert!(
+            stripe_from(vars(&[("STRIPE_PRICE_PRO_ANNUAL", "price_year")])).is_err(),
+            "annuel seul"
+        );
         assert_eq!(stripe.pro_price_id, "price_1");
 
         assert!(

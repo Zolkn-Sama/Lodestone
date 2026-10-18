@@ -31,6 +31,17 @@ use lodestone_llm::MockLlmClient;
 
 /// Secret des webhooks Stripe dans les tests.
 pub const WEBHOOK_SECRET: &str = "whsec_test";
+/// Prix Stripe Pro (mensuel, annuel) configurés dans les tests.
+pub const MONTHLY_PRICE: &str = "price_pro_test";
+pub const ANNUAL_PRICE: &str = "price_pro_annual_test";
+
+/// Configuration de la facturation d'un serveur de test.
+enum Billing {
+    Disabled,
+    /// Stripe configuré, sans prix annuel.
+    MonthlyOnly,
+    Enabled(MockPaymentProvider),
+}
 use lodestone_migration::{Migrator, MigratorTrait};
 
 pub struct TestApp {
@@ -61,15 +72,33 @@ impl TestApp {
 
     /// Comme `spawn`, avec un mock configuré (réponse, lenteur, pannes…).
     pub async fn spawn_with_llm(llm: MockLlmClient) -> Self {
-        Self::spawn_full(llm, true).await
+        Self::spawn_full(llm, Billing::Enabled(MockPaymentProvider::new())).await
     }
 
     /// Serveur sans Stripe configuré : la facturation répond 503.
     pub async fn spawn_without_billing() -> Self {
-        Self::spawn_full(MockLlmClient::new(EMBEDDING_DIMENSIONS), false).await
+        Self::spawn_full(MockLlmClient::new(EMBEDDING_DIMENSIONS), Billing::Disabled).await
     }
 
-    async fn spawn_full(llm: MockLlmClient, billing_enabled: bool) -> Self {
+    /// Stripe configuré sans prix annuel : seul le mensuel est proposé.
+    pub async fn spawn_without_annual() -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::MonthlyOnly,
+        )
+        .await
+    }
+
+    /// Facturation active avec un fournisseur configuré (ex. en panne).
+    pub async fn spawn_with_billing(provider: MockPaymentProvider) -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::Enabled(provider),
+        )
+        .await
+    }
+
+    async fn spawn_full(llm: MockLlmClient, billing_mode: Billing) -> Self {
         // Même image que docker-compose : pgvector sera là quand le RAG arrivera.
         let pg = Postgres::default()
             .with_name("pgvector/pgvector")
@@ -85,14 +114,21 @@ impl TestApp {
 
         let llm = Arc::new(llm);
         let events = Events::default();
-        let billing = Arc::new(MockPaymentProvider::new());
         let mut config = Config::new(url, "secret-de-test".into());
         config.app_base_url = "https://app.test".into();
+        let annual_offered = !matches!(billing_mode, Billing::MonthlyOnly);
+        let (billing, billing_enabled) = match billing_mode {
+            Billing::Disabled => (MockPaymentProvider::new(), false),
+            Billing::MonthlyOnly => (MockPaymentProvider::new(), true),
+            Billing::Enabled(provider) => (provider, true),
+        };
+        let billing = Arc::new(billing);
         if billing_enabled {
             config.stripe = Some(StripeConfig {
                 secret_key: "sk_test".into(),
                 webhook_secret: WEBHOOK_SECRET.into(),
-                pro_price_id: "price_pro_test".into(),
+                pro_price_id: MONTHLY_PRICE.into(),
+                pro_annual_price_id: annual_offered.then(|| ANNUAL_PRICE.into()),
             });
         }
         let state = AppState {
