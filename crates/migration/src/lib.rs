@@ -6,6 +6,7 @@ mod m20260810_130502_create_memberships; // <-- adapte au nom réel du fichier g
 mod m20261016_120000_create_invitations;
 mod m20261016_140000_create_documents_and_chunks;
 mod m20261017_090000_create_conversations;
+mod m20261018_100000_add_plans_and_usage;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261016_120000_create_invitations::Migration),
             Box::new(m20261016_140000_create_documents_and_chunks::Migration),
             Box::new(m20261017_090000_create_conversations::Migration),
+            Box::new(m20261018_100000_add_plans_and_usage::Migration),
         ]
     }
 }
