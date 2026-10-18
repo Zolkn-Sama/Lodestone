@@ -1,3 +1,4 @@
+pub mod account;
 pub mod auth;
 pub mod billing;
 pub mod chat;
@@ -7,4 +8,5 @@ pub mod ingestion;
 pub mod invitations;
 pub mod members;
 pub mod organizations;
+pub mod password_reset;
 pub mod quotas;

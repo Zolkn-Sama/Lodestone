@@ -22,6 +22,8 @@ use uuid::Uuid;
 use lodestone_backend::{
     config::{Config, SovereignPrices, StripeConfig},
     events::Events,
+    mail::MockMailer,
+    rate_limit::Limits,
     router::app_router,
     services::ingestion::EMBEDDING_DIMENSIONS,
     state::AppState,
@@ -58,6 +60,8 @@ pub struct TestApp {
     pub events: Events,
     /// Le fournisseur de paiement de l'`AppState` (facturation active par défaut).
     pub billing: Arc<MockPaymentProvider>,
+    /// Les e-mails « envoyés » par l'application.
+    pub mailer: Arc<MockMailer>,
     // Gardé en vie tant que le test tourne ; le conteneur est supprimé au drop.
     _pg: ContainerAsync<Postgres>,
 }
@@ -77,12 +81,17 @@ impl TestApp {
 
     /// Comme `spawn`, avec un mock configuré (réponse, lenteur, pannes…).
     pub async fn spawn_with_llm(llm: MockLlmClient) -> Self {
-        Self::spawn_full(llm, Billing::Enabled(MockPaymentProvider::new())).await
+        Self::spawn_full(llm, Billing::Enabled(MockPaymentProvider::new()), |_| {}).await
     }
 
     /// Serveur sans Stripe configuré : la facturation répond 503.
     pub async fn spawn_without_billing() -> Self {
-        Self::spawn_full(MockLlmClient::new(EMBEDDING_DIMENSIONS), Billing::Disabled).await
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::Disabled,
+            |_| {},
+        )
+        .await
     }
 
     /// Installation Sovereign auto-hébergée (NEW_ORG_PLAN=sovereign, sans Stripe).
@@ -90,6 +99,7 @@ impl TestApp {
         Self::spawn_full(
             MockLlmClient::new(EMBEDDING_DIMENSIONS),
             Billing::SelfHosted,
+            |_| {},
         )
         .await
     }
@@ -99,6 +109,7 @@ impl TestApp {
         Self::spawn_full(
             MockLlmClient::new(EMBEDDING_DIMENSIONS),
             Billing::MonthlyOnly,
+            |_| {},
         )
         .await
     }
@@ -108,11 +119,26 @@ impl TestApp {
         Self::spawn_full(
             MockLlmClient::new(EMBEDDING_DIMENSIONS),
             Billing::Enabled(provider),
+            |_| {},
         )
         .await
     }
 
-    async fn spawn_full(llm: MockLlmClient, billing_mode: Billing) -> Self {
+    /// Configuration ajustée (ex. confiance dans X-Forwarded-For).
+    pub async fn spawn_with_config(configure: impl FnOnce(&mut Config)) -> Self {
+        Self::spawn_full(
+            MockLlmClient::new(EMBEDDING_DIMENSIONS),
+            Billing::Enabled(MockPaymentProvider::new()),
+            configure,
+        )
+        .await
+    }
+
+    async fn spawn_full(
+        llm: MockLlmClient,
+        billing_mode: Billing,
+        configure: impl FnOnce(&mut Config),
+    ) -> Self {
         // Même image que docker-compose : pgvector sera là quand le RAG arrivera.
         let pg = Postgres::default()
             .with_name("pgvector/pgvector")
@@ -130,6 +156,7 @@ impl TestApp {
         let events = Events::default();
         let mut config = Config::new(url, "secret-de-test".into());
         config.app_base_url = "https://app.test".into();
+        configure(&mut config);
         let annual_offered = !matches!(billing_mode, Billing::MonthlyOnly);
         if matches!(billing_mode, Billing::SelfHosted) {
             config.new_org_plan = lodestone_core::plan::Plan::Sovereign;
@@ -140,6 +167,7 @@ impl TestApp {
             Billing::Enabled(provider) => (provider, true),
         };
         let billing = Arc::new(billing);
+        let mailer = Arc::new(MockMailer::default());
         if billing_enabled {
             config.stripe = Some(StripeConfig {
                 secret_key: "sk_test".into(),
@@ -158,6 +186,8 @@ impl TestApp {
             llm: llm.clone(),
             events: events.clone(),
             billing: billing_enabled.then(|| billing.clone() as Arc<dyn PaymentProvider>),
+            mailer: mailer.clone(),
+            limits: Arc::new(Limits::default()),
         };
 
         Self {
@@ -166,6 +196,7 @@ impl TestApp {
             llm,
             events,
             billing,
+            mailer,
             _pg: pg,
         }
     }

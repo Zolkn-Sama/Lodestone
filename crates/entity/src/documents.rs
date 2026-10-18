@@ -12,7 +12,8 @@ pub struct Model {
     pub title: String,
     pub source_type: String,
     pub status: String,
-    pub uploaded_by: Uuid,
+    /// `None` si l'auteur a supprimé son compte (le document reste à l'org).
+    pub uploaded_by: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
 }
 
@@ -33,7 +34,7 @@ pub enum Relation {
         from = "Column::UploadedBy",
         to = "super::users::Column::Id",
         on_update = "NoAction",
-        on_delete = "Cascade"
+        on_delete = "SetNull"
     )]
     Users,
 }

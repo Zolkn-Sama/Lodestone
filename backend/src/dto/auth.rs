@@ -58,3 +58,22 @@ pub struct MeResponse {
     pub user: UserResponse,
     pub organizations: Vec<crate::dto::organizations::MyOrgResponse>,
 }
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ForgotPasswordRequest {
+    #[validate(email(message = "email invalide"))]
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct ResetPasswordRequest {
+    pub token: String,
+    #[validate(length(min = 8, message = "mot de passe : 8 caractères minimum"))]
+    pub password: String,
+}
+
+/// Confirmation de la suppression du compte.
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    pub password: String,
+}

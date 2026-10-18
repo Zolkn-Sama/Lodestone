@@ -38,6 +38,10 @@ pub enum AppError {
     #[error("Bad gateway: {0}")]
     Upstream(String),
 
+    /// Trop de tentatives : réessayer après la durée indiquée (429 + Retry-After).
+    #[error("Too many requests")]
+    TooManyRequests(std::time::Duration),
+
     /// Limite du plan atteinte : 402, avec le détail pour proposer un upgrade.
     #[error("{}", .0.message())]
     QuotaExceeded(crate::services::quotas::QuotaExceeded),
@@ -85,6 +89,10 @@ impl IntoResponse for AppError {
             AppError::PayloadTooLarge(m) => (StatusCode::PAYLOAD_TOO_LARGE, m.to_string()),
             AppError::QuotaExceeded(q) => (StatusCode::PAYMENT_REQUIRED, q.message()),
             AppError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.to_string()),
+            AppError::TooManyRequests(_) => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "trop de tentatives, réessayez plus tard".to_string(),
+            ),
             AppError::Upstream(m) => (StatusCode::BAD_GATEWAY, m.to_string()),
             AppError::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -108,6 +116,11 @@ impl IntoResponse for AppError {
             }
         };
 
+        let retry_after = match &self {
+            // Arrondi à la seconde supérieure, au moins 1.
+            AppError::TooManyRequests(wait) => Some(wait.as_secs() + 1),
+            _ => None,
+        };
         let quota = match self {
             AppError::QuotaExceeded(q) => Some(q),
             _ => None,
@@ -118,6 +131,12 @@ impl IntoResponse for AppError {
             quota,
         };
 
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if let Some(secs) = retry_after
+            && let Ok(value) = secs.to_string().parse()
+        {
+            response.headers_mut().insert("retry-after", value);
+        }
+        response
     }
 }

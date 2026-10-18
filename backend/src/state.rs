@@ -4,7 +4,7 @@ use std::sync::Arc;
 use lodestone_billing::PaymentProvider;
 use lodestone_llm::LlmClient;
 
-use crate::{config::Config, events::Events};
+use crate::{config::Config, events::Events, mail::Mailer, rate_limit::Limits};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -16,4 +16,8 @@ pub struct AppState {
     pub events: Events,
     /// Stripe en vrai, mock en test ; `None` si la facturation n'est pas configurée.
     pub billing: Option<Arc<dyn PaymentProvider>>,
+    /// SMTP en vrai, désactivé sans config, mock en test.
+    pub mailer: Arc<dyn Mailer>,
+    /// Limitation des tentatives (connexion, inscription, mot de passe oublié).
+    pub limits: Arc<Limits>,
 }

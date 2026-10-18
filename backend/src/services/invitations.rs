@@ -70,6 +70,7 @@ pub async fn invite(
         role,
         expires_at: invitation.expires_at,
         token,
+        email_sent: false,
     })
 }
 

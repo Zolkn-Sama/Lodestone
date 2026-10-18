@@ -1,8 +1,10 @@
 use sea_orm::{ConnectOptions, Database};
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use lodestone_backend::config::Config;
 use lodestone_backend::events::Events;
+use lodestone_backend::mail::{DisabledMailer, Mailer, SmtpMailer};
+use lodestone_backend::rate_limit::Limits;
 use lodestone_backend::router;
 use lodestone_backend::services::ingestion::EMBEDDING_DIMENSIONS;
 use lodestone_backend::state::AppState;
@@ -80,12 +82,28 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 5. État partagé + router.
+    // E-mails : SMTP si configuré, sinon rien ne part (et rien n'est journalisé du contenu).
+    let mailer: Arc<dyn Mailer> = match &config.smtp {
+        Some(smtp) => {
+            info!(host = %smtp.host, port = smtp.port, "e-mails envoyés par SMTP");
+            Arc::new(SmtpMailer::new(smtp)?)
+        }
+        None => {
+            tracing::warn!(
+                "SMTP non configuré : aucun e-mail ne sera envoyé (invitations, mot de passe oublié)"
+            );
+            Arc::new(DisabledMailer)
+        }
+    };
+
     let state = AppState {
         billing,
         db,
         config: Arc::new(config),
         llm: Arc::new(llm),
         events: Events::default(),
+        mailer,
+        limits: Arc::new(Limits::default()),
     };
     let port = state.config.app_port;
     let app = router::app_router(state);
@@ -93,7 +111,12 @@ async fn main() -> anyhow::Result<()> {
     // 6. Écoute et sert.
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     info!(%port, "🚀 Lodestone à l'écoute sur http://0.0.0.0:{port}");
-    axum::serve(listener, app).await?;
+    // Adresse de connexion disponible pour la limitation par IP.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
