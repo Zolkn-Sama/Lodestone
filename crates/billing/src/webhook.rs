@@ -133,6 +133,11 @@ pub struct SubscriptionState {
     pub seats: Option<u32>,
     /// Ligne d'abonnement (`si_…`) dont la quantité = nombre de sièges.
     pub item_id: Option<String>,
+    /// Prix en cours (`price_…`) et sa périodicité (`month` / `year`).
+    pub price_id: Option<String>,
+    pub interval: Option<String>,
+    /// Fin de la période en cours (horodatage Unix).
+    pub current_period_end: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +220,13 @@ pub fn parse_event(payload: &[u8]) -> Result<WebhookEvent, WebhookError> {
                 status,
                 seats,
                 item_id: field(item, "id"),
+                price_id: field(&item["price"], "id"),
+                interval: field(&item["price"]["recurring"], "interval")
+                    .or_else(|| field(&object["plan"], "interval")),
+                // Selon la version d'API, sur la ligne d'abonnement ou sur l'abonnement.
+                current_period_end: item["current_period_end"]
+                    .as_i64()
+                    .or_else(|| object["current_period_end"].as_i64()),
             })
         }
         _ => BillingEvent::Ignored,
@@ -342,7 +354,10 @@ mod tests {
         let object = json!({
             "id": "sub_1", "customer": "cus_1", "status": "past_due",
             "metadata": { "org_id": org },
-            "items": { "data": [ { "id": "si_1", "quantity": 7 } ] }
+            "items": { "data": [ {
+                "id": "si_1", "quantity": 7, "current_period_end": 1_900_000_000,
+                "price": { "id": "price_year", "recurring": { "interval": "year" } }
+            } ] }
         });
         let parsed = parse_event(&event("customer.subscription.updated", object.clone()))
             .expect("événement");
@@ -355,6 +370,9 @@ mod tests {
         assert!(state.status.grants_pro(), "relances : on garde le Pro");
         assert_eq!(state.seats, Some(7));
         assert_eq!(state.item_id.as_deref(), Some("si_1"));
+        assert_eq!(state.price_id.as_deref(), Some("price_year"));
+        assert_eq!(state.interval.as_deref(), Some("year"));
+        assert_eq!(state.current_period_end, Some(1_900_000_000));
 
         let parsed =
             parse_event(&event("customer.subscription.deleted", object)).expect("événement");
