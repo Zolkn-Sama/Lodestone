@@ -24,10 +24,6 @@ pub async fn root() -> impl IntoResponse {
     Json(json!({ "services": "lodestone", "status": "running" }))
 }
 
-pub async fn boom() -> crate::error::Result<Json<serde_json::Value>> {
-    Err(crate::error::AppError::InvalidInput("exemple".into()))
-}
-
 pub async fn health() -> impl IntoResponse {
     Json(json!({ "status": "ok" }))
 }
