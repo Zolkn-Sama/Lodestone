@@ -1,4 +1,4 @@
-use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, DbErr, EntityTrait, Set};
 use uuid::Uuid;
 
 use lodestone_entity::conversations;
@@ -18,4 +18,11 @@ pub async fn create<C: ConnectionTrait>(
     }
     .insert(conn)
     .await
+}
+
+pub async fn find_by_id<C: ConnectionTrait>(
+    conn: &C,
+    id: Uuid,
+) -> Result<Option<conversations::Model>, DbErr> {
+    conversations::Entity::find_by_id(id).one(conn).await
 }
