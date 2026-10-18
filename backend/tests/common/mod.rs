@@ -57,7 +57,7 @@ impl TestApp {
         let port = pg.get_host_port_ipv4(5432).await.expect("port Postgres");
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-        let db = Database::connect(&url).await.expect("connexion Postgres");
+        let db = connect_with_retry(&url).await;
         Migrator::up(&db, None).await.expect("migrations");
 
         let llm = Arc::new(MockLlmClient::new(EMBEDDING_DIMENSIONS));
@@ -249,6 +249,23 @@ impl TestApp {
             .await;
         assert_eq!(status, StatusCode::OK, "accept : {body}");
     }
+}
+
+/// Sous forte charge (beaucoup de conteneurs démarrés en parallèle), le port
+/// publié par Docker peut refuser les toutes premières connexions : on réessaie
+/// quelques secondes avant d'abandonner.
+async fn connect_with_retry(url: &str) -> DatabaseConnection {
+    let mut last_error = None;
+    for _ in 0..20 {
+        match Database::connect(url).await {
+            Ok(db) => return db,
+            Err(e) => {
+                last_error = Some(e);
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+        }
+    }
+    panic!("connexion Postgres impossible après 5 s : {last_error:?}");
 }
 
 /// Construit un corps multipart/form-data. `parts` : (Content-Disposition sans

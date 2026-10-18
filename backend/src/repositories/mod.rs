@@ -1,4 +1,5 @@
 pub mod chunks;
+pub mod conversations;
 pub mod documents;
 pub mod invitations;
 pub mod memberships;
