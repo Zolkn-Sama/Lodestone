@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::{
     error::BillingError,
-    provider::{CheckoutRequest, CheckoutSession, PaymentProvider},
+    provider::{CheckoutRequest, CheckoutSession, PaymentProvider, PriceInfo, PriceTier},
 };
 
 pub const STRIPE_API_BASE: &str = "https://api.stripe.com/v1";
@@ -23,6 +23,41 @@ pub struct StripeClient {
 struct SessionResponse {
     id: String,
     url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PriceResponse {
+    currency: String,
+    billing_scheme: Option<String>,
+    tiers_mode: Option<String>,
+    recurring: Option<Recurring>,
+    #[serde(default)]
+    tiers: Vec<TierResponse>,
+}
+
+#[derive(Deserialize)]
+struct Recurring {
+    interval: String,
+}
+
+#[derive(Deserialize)]
+struct TierResponse {
+    up_to: Option<u64>,
+    flat_amount: Option<u64>,
+    unit_amount: Option<u64>,
+}
+
+/// Statut d'erreur -> `BillingError::Api` (avec le corps, explicite chez Stripe).
+async fn check_status(res: reqwest::Response) -> Result<reqwest::Response, BillingError> {
+    let status = res.status();
+    if status.is_success() {
+        return Ok(res);
+    }
+    let body = res.text().await.unwrap_or_default();
+    Err(BillingError::Api {
+        status: status.as_u16(),
+        body,
+    })
 }
 
 impl StripeClient {
@@ -83,15 +118,8 @@ impl PaymentProvider for StripeClient {
             .await
             .map_err(|e| BillingError::Transport(e.to_string()))?;
 
-        let status = res.status();
-        if !status.is_success() {
-            let body = res.text().await.unwrap_or_default();
-            return Err(BillingError::Api {
-                status: status.as_u16(),
-                body,
-            });
-        }
-        let session: SessionResponse = res
+        let session: SessionResponse = check_status(res)
+            .await?
             .json()
             .await
             .map_err(|e| BillingError::InvalidResponse(e.to_string()))?;
@@ -101,6 +129,62 @@ impl PaymentProvider for StripeClient {
         Ok(CheckoutSession {
             id: session.id,
             url,
+        })
+    }
+
+    async fn update_seats(
+        &self,
+        subscription_item_id: &str,
+        seats: u32,
+    ) -> Result<(), BillingError> {
+        let seats = seats.to_string();
+        let res = self
+            .http
+            .post(format!(
+                "{}/subscription_items/{subscription_item_id}",
+                self.base_url
+            ))
+            .bearer_auth(&self.secret_key)
+            .form(&[
+                ("quantity", seats.as_str()),
+                // Ajout/retrait d'un siège en cours de mois : facturé au prorata.
+                ("proration_behavior", "create_prorations"),
+            ])
+            .send()
+            .await
+            .map_err(|e| BillingError::Transport(e.to_string()))?;
+        check_status(res).await?;
+        Ok(())
+    }
+
+    async fn pro_price(&self) -> Result<PriceInfo, BillingError> {
+        let res = self
+            .http
+            .get(format!("{}/prices/{}", self.base_url, self.pro_price_id))
+            .bearer_auth(&self.secret_key)
+            .query(&[("expand[]", "tiers")])
+            .send()
+            .await
+            .map_err(|e| BillingError::Transport(e.to_string()))?;
+        let price: PriceResponse = check_status(res)
+            .await?
+            .json()
+            .await
+            .map_err(|e| BillingError::InvalidResponse(e.to_string()))?;
+        Ok(PriceInfo {
+            currency: price.currency,
+            interval: price.recurring.map(|r| r.interval),
+            tiered_volume: price.billing_scheme.as_deref() == Some("tiered")
+                && price.tiers_mode.as_deref() == Some("volume"),
+            tiers: price
+                .tiers
+                .into_iter()
+                .map(|t| PriceTier {
+                    up_to: t.up_to,
+                    flat_amount: t.flat_amount,
+                    unit_amount: t.unit_amount,
+                })
+                .collect(),
         })
     }
 }
@@ -212,5 +296,81 @@ mod tests {
             client.create_checkout(&request()).await,
             Err(BillingError::InvalidResponse(_))
         ));
+    }
+
+    type SeenItem = Arc<Mutex<Vec<(String, Vec<(String, String)>)>>>;
+
+    #[tokio::test]
+    async fn met_a_jour_les_sieges_avec_prorata() {
+        let seen: SeenItem = Arc::default();
+        let app = Router::new()
+            .route(
+                "/v1/subscription_items/{id}",
+                post(
+                    move |State(seen): State<SeenItem>,
+                          axum::extract::Path(id): axum::extract::Path<String>,
+                          Form(form): Form<Vec<(String, String)>>| async move {
+                        if let Ok(mut s) = seen.lock() {
+                            s.push((id, form));
+                        }
+                        axum::Json(json!({ "id": "si_1", "quantity": 6 }))
+                    },
+                ),
+            )
+            .with_state(seen.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let client = StripeClient::with_base_url(format!("http://{addr}/v1"), "sk", "price")
+            .expect("client");
+        client.update_seats("si_1", 6).await.expect("mise à jour");
+
+        let seen = seen.lock().expect("lock");
+        assert_eq!(seen[0].0, "si_1");
+        let form = &seen[0].1;
+        assert!(form.contains(&("quantity".into(), "6".into())));
+        assert!(form.contains(&("proration_behavior".into(), "create_prorations".into())));
+    }
+
+    #[tokio::test]
+    async fn lit_les_paliers_du_prix() {
+        let app = Router::new().route(
+            "/v1/prices/{id}",
+            axum::routing::get(
+                |axum::extract::Path(id): axum::extract::Path<String>,
+                 axum::extract::RawQuery(query): axum::extract::RawQuery| async move {
+                    assert_eq!(id, "price_pro");
+                    assert!(
+                        query.unwrap_or_default().contains("tiers"),
+                        "tiers demandés"
+                    );
+                    axum::Json(json!({
+                        "id": "price_pro", "currency": "eur",
+                        "billing_scheme": "tiered", "tiers_mode": "volume",
+                        "recurring": { "interval": "month" },
+                        "tiers": [
+                            { "up_to": 5, "flat_amount": 14900, "unit_amount": 0 },
+                            { "up_to": null, "flat_amount": null, "unit_amount": 2900 }
+                        ]
+                    }))
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let client = StripeClient::with_base_url(format!("http://{addr}/v1"), "sk", "price_pro")
+            .expect("client");
+        let price = client.pro_price().await.expect("prix");
+        assert_eq!(
+            price,
+            crate::MockPaymentProvider::tiered_price(5, 14900, 2900)
+        );
     }
 }

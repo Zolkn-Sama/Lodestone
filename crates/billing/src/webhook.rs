@@ -131,6 +131,8 @@ pub struct SubscriptionState {
     pub org_id: Option<Uuid>,
     pub status: SubscriptionStatus,
     pub seats: Option<u32>,
+    /// Ligne d'abonnement (`si_…`) dont la quantité = nombre de sièges.
+    pub item_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,7 +203,8 @@ pub fn parse_event(payload: &[u8]) -> Result<WebhookEvent, WebhookError> {
                     &field(object, "status").ok_or_else(|| invalid("statut manquant"))?,
                 )
             };
-            let seats = object["items"]["data"][0]["quantity"]
+            let item = &object["items"]["data"][0];
+            let seats = item["quantity"]
                 .as_u64()
                 .or_else(|| object["quantity"].as_u64())
                 .and_then(|q| u32::try_from(q).ok());
@@ -211,6 +214,7 @@ pub fn parse_event(payload: &[u8]) -> Result<WebhookEvent, WebhookError> {
                 org_id: org_id(object),
                 status,
                 seats,
+                item_id: field(item, "id"),
             })
         }
         _ => BillingEvent::Ignored,
@@ -338,7 +342,7 @@ mod tests {
         let object = json!({
             "id": "sub_1", "customer": "cus_1", "status": "past_due",
             "metadata": { "org_id": org },
-            "items": { "data": [ { "quantity": 7 } ] }
+            "items": { "data": [ { "id": "si_1", "quantity": 7 } ] }
         });
         let parsed = parse_event(&event("customer.subscription.updated", object.clone()))
             .expect("événement");
@@ -350,6 +354,7 @@ mod tests {
         assert_eq!(state.status, SubscriptionStatus::PastDue);
         assert!(state.status.grants_pro(), "relances : on garde le Pro");
         assert_eq!(state.seats, Some(7));
+        assert_eq!(state.item_id.as_deref(), Some("si_1"));
 
         let parsed =
             parse_event(&event("customer.subscription.deleted", object)).expect("événement");

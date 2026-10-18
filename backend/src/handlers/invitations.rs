@@ -40,5 +40,7 @@ pub async fn accept(
     Json(body): Json<AcceptInvitationRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let org = services::invitations::accept(&state.db, user.user_id, body.token).await?;
+    // Un membre de plus : la quantité de l'abonnement Pro suit.
+    services::billing::spawn_seat_sync(state.db.clone(), state.billing.clone(), org.id);
     Ok(Json(org))
 }

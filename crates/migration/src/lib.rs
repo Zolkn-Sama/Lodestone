@@ -8,6 +8,7 @@ mod m20261016_140000_create_documents_and_chunks;
 mod m20261017_090000_create_conversations;
 mod m20261018_100000_add_plans_and_usage;
 mod m20261018_120000_create_subscriptions;
+mod m20261018_140000_add_subscription_item;
 
 pub struct Migrator;
 
@@ -23,6 +24,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261017_090000_create_conversations::Migration),
             Box::new(m20261018_100000_add_plans_and_usage::Migration),
             Box::new(m20261018_120000_create_subscriptions::Migration),
+            Box::new(m20261018_140000_add_subscription_item::Migration),
         ]
     }
 }

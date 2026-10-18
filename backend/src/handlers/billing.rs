@@ -35,7 +35,13 @@ pub async fn status(
     State(state): State<AppState>,
     member: OrgMember<Admin>,
 ) -> Result<impl IntoResponse, AppError> {
-    let response = billing::status(&state.db, state.billing.is_some(), member.org_id).await?;
+    let response = billing::status(
+        &state.db,
+        state.billing.is_some(),
+        state.config.pro_pricing,
+        member.org_id,
+    )
+    .await?;
     Ok(Json(response))
 }
 

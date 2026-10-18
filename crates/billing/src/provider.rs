@@ -22,6 +22,26 @@ pub struct CheckoutSession {
     pub url: String,
 }
 
+/// Un palier d'un prix « par paliers » (montants en centimes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceTier {
+    /// Dernière quantité couverte ; `None` = sans limite (dernier palier).
+    pub up_to: Option<u64>,
+    pub flat_amount: Option<u64>,
+    pub unit_amount: Option<u64>,
+}
+
+/// Description du prix Pro tel que configuré chez le fournisseur.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriceInfo {
+    pub currency: String,
+    /// `month`, `year`…
+    pub interval: Option<String>,
+    /// Prix par paliers en mode « volume » (tout le volume au tarif du palier atteint).
+    pub tiered_volume: bool,
+    pub tiers: Vec<PriceTier>,
+}
+
 /// Fournisseur de paiement (Stripe en vrai, mock en test).
 #[async_trait]
 pub trait PaymentProvider: Send + Sync {
@@ -29,4 +49,14 @@ pub trait PaymentProvider: Send + Sync {
         &self,
         request: &CheckoutRequest,
     ) -> Result<CheckoutSession, BillingError>;
+
+    /// Met à jour le nombre de sièges d'un abonnement (avec prorata).
+    async fn update_seats(
+        &self,
+        subscription_item_id: &str,
+        seats: u32,
+    ) -> Result<(), BillingError>;
+
+    /// Le prix Pro configuré chez le fournisseur (vérification au démarrage).
+    async fn pro_price(&self) -> Result<PriceInfo, BillingError>;
 }

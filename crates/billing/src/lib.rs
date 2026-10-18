@@ -10,7 +10,7 @@ pub mod webhook;
 
 pub use error::{BillingError, WebhookError};
 pub use mock::MockPaymentProvider;
-pub use provider::{CheckoutRequest, CheckoutSession, PaymentProvider};
+pub use provider::{CheckoutRequest, CheckoutSession, PaymentProvider, PriceInfo, PriceTier};
 pub use stripe::StripeClient;
 pub use webhook::{
     BillingEvent, SubscriptionState, SubscriptionStatus, WebhookEvent, parse_event, sign_payload,
