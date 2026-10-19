@@ -1,0 +1,18 @@
+flowchart TD
+    backend["backend<br/>serveur HTTP + WebSocket"]
+    core["core<br/>Role, Plan, DocumentStatus, tarifs"]
+    entity["entity<br/>entités SeaORM"]
+    migration["migration<br/>schéma versionné"]
+    auth["auth<br/>argon2id, JWT, jetons opaques"]
+    rag["rag<br/>extraction, découpage, prompt<br/>(pur, sans réseau)"]
+    llm["llm<br/>trait LlmClient<br/>Ollama / OpenAI / mock"]
+    billing["billing<br/>trait PaymentProvider<br/>Stripe / mock, webhooks"]
+
+    backend --> core
+    backend --> entity
+    backend --> migration
+    backend --> auth
+    backend --> rag
+    backend --> llm
+    backend --> billing
+    migration -.-> entity

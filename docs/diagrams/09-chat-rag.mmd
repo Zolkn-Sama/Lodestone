@@ -1,0 +1,22 @@
+sequenceDiagram
+    autonumber
+    actor M as Membre
+    participant F as Front
+    participant WS as /ws
+    participant DB as Base (pgvector)
+    participant LLM as LLM
+
+    F->>WS: connexion ?token=access_token
+    M->>F: pose une question
+    F->>WS: { type: "ask", conversation_id, question }
+    WS->>DB: vérifie la conversation (auteur, encore membre) + quota de questions
+    WS->>LLM: embedding de la question
+    WS->>DB: 5 fragments les plus proches, filtrés par org
+    WS-->>F: { type: "sources", citations }
+    WS->>LLM: prompt (consignes + extraits [1], [2]... + question)
+    loop morceau par morceau
+        LLM-->>WS: delta
+        WS-->>F: { type: "token", delta }
+    end
+    WS->>DB: question + réponse + sources + compteur (une transaction)
+    WS-->>F: { type: "done", message_id }

@@ -1,0 +1,90 @@
+erDiagram
+    users ||--o{ memberships : "appartient à"
+    organizations ||--o{ memberships : "a pour membres"
+    organizations ||--o{ invitations : "invite"
+    users |o--o{ invitations : "a invité"
+    users ||--o{ refresh_tokens : "sessions"
+    users ||--o{ password_resets : "liens de réinitialisation"
+    organizations ||--o{ documents : "possède"
+    users |o--o{ documents : "a apporté"
+    documents ||--o{ document_chunks : "découpé en"
+    organizations ||--o{ document_chunks : "isolation"
+    organizations ||--o{ conversations : "contient"
+    users ||--o{ conversations : "auteur"
+    conversations ||--o{ messages : "contient"
+    messages ||--o{ message_sources : "cite"
+    document_chunks ||--o{ message_sources : "cité dans"
+    organizations ||--o| subscriptions : "abonnement"
+    organizations ||--o{ org_usage : "compteur mensuel"
+
+    users {
+        uuid id PK
+        text email UK
+        text password_hash
+    }
+    organizations {
+        uuid id PK
+        text name
+        text plan "free | pro | sovereign"
+        timestamptz sovereign_setup_paid_at
+    }
+    memberships {
+        uuid user_id FK
+        uuid org_id FK
+        text role "owner | admin | member"
+    }
+    invitations {
+        uuid org_id FK
+        text email
+        text role
+        text token_hash UK
+        timestamptz expires_at
+        timestamptz accepted_at
+    }
+    documents {
+        uuid id PK
+        uuid org_id FK
+        uuid uploaded_by FK "NULL si compte supprimé"
+        text title
+        text status "pending | processing | ready | failed"
+        text embedding_model
+    }
+    document_chunks {
+        uuid id PK
+        uuid document_id FK
+        uuid org_id FK
+        int chunk_index
+        text content
+        vector embedding "768 dimensions, index HNSW"
+    }
+    conversations {
+        uuid id PK
+        uuid org_id FK
+        uuid user_id FK
+        text title
+    }
+    messages {
+        uuid id PK
+        uuid conversation_id FK
+        text role "user | assistant"
+        text content
+    }
+    message_sources {
+        uuid message_id FK
+        uuid chunk_id FK
+        real score
+    }
+    subscriptions {
+        uuid org_id PK
+        text stripe_subscription_id UK
+        text product "pro | sovereign"
+        text status
+        int seats
+        text billing_interval "month | year"
+        text scheduled_interval
+    }
+    org_usage {
+        uuid org_id PK
+        date period PK
+        int questions
+    }

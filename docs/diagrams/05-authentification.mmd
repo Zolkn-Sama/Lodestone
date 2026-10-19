@@ -1,0 +1,20 @@
+sequenceDiagram
+    autonumber
+    actor U as Utilisateur
+    participant F as Front
+    participant API as API
+    participant DB as Base
+
+    U->>F: email + mot de passe
+    F->>API: POST /api/auth/login
+    API->>API: limite (5 échecs / 15 min par compte et IP)
+    API->>DB: utilisateur + vérification argon2id
+    API->>DB: enregistre le hash du refresh token (7 jours)
+    API-->>F: access_token (JWT 15 min) + refresh_token
+    F->>API: GET /api/... (Authorization: Bearer access_token)
+    Note over F,API: 15 minutes plus tard, l'access token expire
+    F->>API: POST /api/auth/refresh (refresh_token)
+    API->>DB: révoque l'ancien, enregistre le nouveau (rotation)
+    API-->>F: nouvelle paire de jetons
+    F->>API: POST /api/auth/logout (refresh_token)
+    API->>DB: révoque le refresh token

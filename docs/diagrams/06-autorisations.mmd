@@ -1,0 +1,8 @@
+flowchart TD
+    a["Requête /api/orgs/{id}/..."] --> b{"Jeton valide ?"}
+    b -- non --> e401["401"]
+    b -- oui --> c{"Membre de l'org ?"}
+    c -- non --> e404["404"]
+    c -- oui --> d{"Rôle suffisant ?"}
+    d -- non --> e403["403"]
+    d -- oui --> ok["Handler"]
