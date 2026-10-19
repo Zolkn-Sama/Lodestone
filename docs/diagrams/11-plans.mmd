@@ -1,0 +1,7 @@
+stateDiagram-v2
+    [*] --> free: création de l'org
+    free --> pro: paiement Stripe (webhook)
+    pro --> pro: past_due (relances, Pro conservé)
+    pro --> free: unpaid / canceled
+    free --> sovereign: contrat (équipe Lodestone)
+    sovereign --> sovereign: licence annuelle (Stripe ou hors ligne)

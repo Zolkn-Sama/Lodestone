@@ -1,0 +1,7 @@
+flowchart LR
+    req["Requête HTTP"] --> ext["Extracteurs<br/>AuthUser, OrgMember, DocumentAccess,<br/>ConversationAccess, ClientIp"]
+    ext --> h["Handlers<br/>(validation, codes HTTP)"]
+    h --> s["Services<br/>(règles métier, transactions)"]
+    s --> r["Repositories<br/>(SQL via SeaORM)"]
+    r --> pg[("PostgreSQL")]
+    s --> ext2["Crates externes<br/>llm, rag, billing, mail"]

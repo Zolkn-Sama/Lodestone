@@ -1,0 +1,9 @@
+stateDiagram-v2
+    [*] --> pending: upload
+    pending --> processing: tâche lancée
+    processing --> ready: fragments enregistrés
+    processing --> failed: fichier illisible, LLM en panne
+    pending --> failed: redémarrage du serveur
+    processing --> failed: redémarrage du serveur
+    ready --> [*]: suppression
+    failed --> [*]: suppression

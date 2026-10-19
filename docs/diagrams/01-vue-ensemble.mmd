@@ -1,0 +1,27 @@
+flowchart LR
+    user(["Utilisateur<br/>navigateur"])
+    front["Front Next.js<br/>(dépôt séparé)"]
+
+    subgraph backend["Serveur Lodestone (Rust, Axum)"]
+        rest["API REST<br/>/api/..."]
+        ws["WebSocket<br/>/ws"]
+        bus["Bus d'événements<br/>en mémoire"]
+    end
+
+    db[("PostgreSQL<br/>+ pgvector")]
+    llm["LLM compatible OpenAI<br/>Ollama (local) ou OpenAI"]
+    smtp["Serveur SMTP"]
+    stripe["Stripe"]
+
+    user --> front
+    front -- "HTTPS + JWT" --> rest
+    front -- "WSS ?token=" --> ws
+    rest --> db
+    ws --> db
+    rest -- "embeddings" --> llm
+    ws -- "embeddings + génération" --> llm
+    rest -- "invitations, mot de passe oublié" --> smtp
+    rest -- "Checkout, sièges" --> stripe
+    stripe -- "webhooks signés" --> rest
+    rest -- "doc_status" --> bus
+    bus --> ws

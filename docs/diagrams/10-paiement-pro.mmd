@@ -1,0 +1,19 @@
+sequenceDiagram
+    autonumber
+    actor O as Owner
+    participant F as Front
+    participant API as API
+    participant S as Stripe
+    participant DB as Base
+
+    O->>F: « Passer en Pro » (mensuel ou annuel)
+    F->>API: POST /api/orgs/{id}/billing/checkout { interval }
+    API->>S: session Checkout (quantité = nombre de membres)
+    API-->>F: { url }
+    F->>S: redirection vers la page de paiement
+    O->>S: paie
+    S->>API: webhook checkout.session.completed (signé)
+    API->>DB: abonnement actif, plan = pro (quotas levés aussitôt)
+    S->>API: webhook customer.subscription.updated
+    API->>DB: sièges, périodicité, fin de période
+    Note over API,S: Arrivée / départ d'un membre : quantité Stripe mise à jour (prorata)

@@ -1,0 +1,17 @@
+sequenceDiagram
+    autonumber
+    actor U as Utilisateur
+    participant F as Front
+    participant API as API
+    participant M as SMTP
+    participant DB as Base
+
+    U->>F: « Mot de passe oublié »
+    F->>API: POST /api/auth/password/forgot { email }
+    API-->>F: 202 (toujours, compte existant ou non)
+    API->>DB: jeton haché, valable 1 h (les précédents invalidés)
+    API->>M: e-mail avec le lien /reset-password?token=...
+    U->>F: ouvre le lien, saisit un nouveau mot de passe
+    F->>API: POST /api/auth/password/reset { token, password }
+    API->>DB: nouveau mot de passe, jeton consommé, TOUTES les sessions révoquées
+    API-->>F: 204

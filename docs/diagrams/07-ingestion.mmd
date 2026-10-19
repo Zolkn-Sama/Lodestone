@@ -1,0 +1,23 @@
+sequenceDiagram
+    autonumber
+    actor A as Admin
+    participant F as Front
+    participant API as API
+    participant T as Tâche d'ingestion
+    participant LLM as LLM (embeddings)
+    participant DB as Base
+    participant WS as WebSocket des membres
+
+    A->>F: choisit un fichier (pdf, txt, md, 20 Mo max)
+    F->>API: POST /api/orgs/{id}/documents (multipart)
+    API->>DB: quota documents (sous verrou) + document "pending"
+    API-->>F: 202 Accepted (document pending)
+    API->>WS: doc_status pending
+    API->>T: lance l'ingestion en tâche de fond
+    T->>DB: status = processing
+    T->>WS: doc_status processing
+    T->>T: extraction du texte + découpage (~800 tokens, chevauchement 80)
+    T->>LLM: embeddings par lots de 32
+    T->>DB: fragments + vecteurs (une transaction)
+    T->>DB: status = ready
+    T->>WS: doc_status ready

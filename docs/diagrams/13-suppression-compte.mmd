@@ -1,0 +1,9 @@
+flowchart TD
+    a["DELETE /api/auth/me { password }"] --> b{"Mot de passe correct ?"}
+    b -- non --> e401["401 (essais limités)"]
+    b -- oui --> c{"Seul owner d'une org<br/>avec d'autres membres ?"}
+    c -- oui --> e409a["409 : nommer un autre owner"]
+    c -- non --> d{"Seul membre d'une org<br/>avec abonnement actif ?"}
+    d -- oui --> e409b["409 : résilier d'abord"]
+    d -- non --> f["Suppression :<br/>orgs dont il est seul membre,<br/>compte, sessions, conversations"]
+    f --> g["Documents et invitations<br/>restent à l'org (auteur NULL)"]
